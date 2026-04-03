@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Tushare 股票列表获取脚本
+Tushare Stock List Fetch Script
 
-从 Tushare Pro 获取 A股、港股、美股列表信息，保存为 CSV 文件
+Fetch A-share, Hong Kong, and US stock lists from Tushare Pro and save them as CSV files.
 
-使用方法：
+Usage:
     python3 scripts/fetch_tushare_stock_list.py
 
-环境要求：
-    - 需要在 .env 中配置 TUSHARE_TOKEN
-    - 需要安装 tushare: pip install tushare
-    - 账号积分要求：
-        * A股/港股：2000积分
-        * 美股：120积分试用，5000积分正式权限
+Requirements:
+    - Set TUSHARE_TOKEN in .env
+    - Install tushare: pip install tushare
+    - Account points required:
+        * A-shares / HK stocks: 2000 points
+        * US stocks: 120 points for trial access, 5000 for full access
 
-输出文件：
-    - data/stock_list_a.csv      A股列表
-    - data/stock_list_hk.csv     港股列表
-    - data/stock_list_us.csv     美股列表
-    - data/README_stock_list.md  数据说明文档
+Output files:
+    - data/stock_list_a.csv      A-share list
+    - data/stock_list_hk.csv     Hong Kong stock list
+    - data/stock_list_us.csv     US stock list
+    - data/README_stock_list.md  Data documentation
 """
 
 import os
@@ -33,151 +33,151 @@ from typing import Optional
 import pandas as pd
 from dotenv import load_dotenv
 
-# 添加项目根目录到路径
+# Add the project root to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
     import tushare as ts
 except ImportError:
-    print("[错误] 未安装 tushare 库")
-    print("请执行: pip install tushare")
+    print("[ERROR] tushare is not installed")
+    print("Run: pip install tushare")
     sys.exit(1)
 
 
-# 配置
+# Config
 load_dotenv()
 
 TUSHARE_TOKEN = os.getenv('TUSHARE_TOKEN')
 OUTPUT_DIR = Path(__file__).parent.parent / "data"
-PAGE_SIZE = 5000  # 美股每页读取数量（API 最大6000，设置5000留余量）
-SLEEP_MIN = 5     # 最小睡眠时间（秒）
-SLEEP_MAX = 10    # 最大睡眠时间（秒）
+PAGE_SIZE = 5000  # Rows per US-stock page (API max is 6000; keep headroom at 5000)
+SLEEP_MIN = 5     # Minimum sleep time in seconds
+SLEEP_MAX = 10    # Maximum sleep time in seconds
 
 
 def get_tushare_api() -> Optional[ts.pro_api]:
     """
-    获取 Tushare API 实例
+    Get a Tushare API client.
 
     Returns:
-        Tushare API 实例，失败返回 None
+        Tushare API client, or None on failure
     """
     if not TUSHARE_TOKEN:
-        print("[错误] 未找到 TUSHARE_TOKEN")
-        print("请在 .env 文件中配置: TUSHARE_TOKEN=你的token")
+        print("[ERROR] TUSHARE_TOKEN was not found")
+        print("Set it in .env, for example: TUSHARE_TOKEN=your_token")
         return None
 
     try:
         api = ts.pro_api(TUSHARE_TOKEN)
-        # 测试连接
+        # Smoke-test the connection
         api.trade_cal(exchange='SSE', start_date='20240101', end_date='20240101')
-        print("✓ Tushare API 连接成功")
+        print("✓ Tushare API connection succeeded")
         return api
     except Exception as e:
-        print(f"[错误] Tushare API 连接失败: {e}")
-        print("请检查：")
-        print("  1. TUSHARE_TOKEN 是否正确")
-        print("  2. 账号积分是否足够（A股/港股需要2000积分）")
+        print(f"[ERROR] Tushare API connection failed: {e}")
+        print("Check the following:")
+        print("  1. TUSHARE_TOKEN is correct")
+        print("  2. Your account has enough points (A-shares / HK stocks require 2000 points)")
         return None
 
 
 def random_sleep(min_seconds: int = SLEEP_MIN, max_seconds: int = SLEEP_MAX):
     """
-    随机睡眠，避免频繁请求
+    Sleep for a random interval to avoid sending requests too frequently.
 
     Args:
-        min_seconds: 最小睡眠时间
-        max_seconds: 最大睡眠时间
+        min_seconds: Minimum sleep time
+        max_seconds: Maximum sleep time
     """
     sleep_time = random.uniform(min_seconds, max_seconds)
-    print(f"  ⏱  休息 {sleep_time:.1f} 秒...")
+    print(f"  ⏱  Sleeping for {sleep_time:.1f} seconds...")
     time.sleep(sleep_time)
 
 
 def fetch_a_stock_list(api: ts.pro_api) -> Optional[pd.DataFrame]:
     """
-    获取 A股列表
+    Fetch the A-share stock list.
 
-    接口：stock_basic
-    限量：单次最多6000行（覆盖全市场A股）
+    API: stock_basic
+    Limit: up to 6000 rows per call, enough to cover the full A-share market
 
     Args:
-        api: Tushare API 实例
+        api: Tushare API client
 
     Returns:
-        A股数据 DataFrame，失败返回 None
+        A-share DataFrame, or None on failure
     """
-    print("\n[1/3] 正在获取 A股列表...")
+    print("\n[1/3] Fetching A-share stock list...")
 
     try:
-        # 获取所有正常上市的股票
+        # Fetch all normally listed stocks
         df = api.stock_basic(
-            exchange='',        # 空：全部交易所
-            list_status='L',    # L: 上市, D: 退市, P: 暂停上市
+            exchange='',        # Empty means all exchanges
+            list_status='L',    # L: listed, D: delisted, P: suspended
             fields='ts_code,symbol,name,area,industry,fullname,enname,cnspell,market,exchange,curr_type,list_status,list_date,delist_date,is_hs,act_name,act_ent_type'
         )
 
         if df is not None and len(df) > 0:
-            print(f"✓ A股列表获取成功，共 {len(df)} 只股票")
-            print("  - 交易所分布：")
+            print(f"✓ A-share stock list fetched successfully: {len(df)} stocks")
+            print("  - Exchange distribution:")
             for exchange, count in df['exchange'].value_counts().items():
-                print(f"    {exchange}: {count} 只")
+                print(f"    {exchange}: {count} stocks")
             return df
         else:
-            print("[错误] A股数据为空")
+            print("[ERROR] A-share dataset is empty")
             return None
 
     except Exception as e:
-        print(f"[错误] 获取 A股列表失败: {e}")
+        print(f"[ERROR] Failed to fetch A-share stock list: {e}")
         return None
 
 
 def fetch_hk_stock_list(api: ts.pro_api) -> Optional[pd.DataFrame]:
     """
-    获取港股列表
+    Fetch the Hong Kong stock list.
 
-    接口：hk_basic
-    限量：单次可提取全部在交易的港股
+    API: hk_basic
+    Limit: one call can fetch the full actively traded Hong Kong stock list
 
     Args:
-        api: Tushare API 实例
+        api: Tushare API client
 
     Returns:
-        港股数据 DataFrame，失败返回 None
+        Hong Kong stock DataFrame, or None on failure
     """
-    print("\n[2/3] 正在获取港股列表...")
+    print("\n[2/3] Fetching Hong Kong stock list...")
 
     try:
-        # 获取所有正常上市的港股
+        # Fetch all normally listed Hong Kong stocks
         df = api.hk_basic(
-            list_status='L'    # L: 上市, D: 退市
+            list_status='L'    # L: listed, D: delisted
         )
 
         if df is not None and len(df) > 0:
-            print(f"✓ 港股列表获取成功，共 {len(df)} 只股票")
+            print(f"✓ Hong Kong stock list fetched successfully: {len(df)} stocks")
             return df
         else:
-            print("[错误] 港股数据为空")
+            print("[ERROR] Hong Kong stock dataset is empty")
             return None
 
     except Exception as e:
-        print(f"[错误] 获取港股列表失败: {e}")
+        print(f"[ERROR] Failed to fetch Hong Kong stock list: {e}")
         return None
 
 
 def fetch_us_stock_list(api: ts.pro_api) -> Optional[pd.DataFrame]:
     """
-    获取美股列表（分页读取）
+    Fetch the US stock list with pagination.
 
-    接口：us_basic
-    限量：单次最大6000，需要分页提取
+    API: us_basic
+    Limit: up to 6000 rows per call, so pagination is required
 
     Args:
-        api: Tushare API 实例
+        api: Tushare API client
 
     Returns:
-        美股数据 DataFrame，失败返回 None
+        US stock DataFrame, or None on failure
     """
-    print("\n[3/3] 正在获取美股列表（分页读取）...")
+    print("\n[3/3] Fetching US stock list with pagination...")
 
     all_data = []
     offset = 0
@@ -185,7 +185,7 @@ def fetch_us_stock_list(api: ts.pro_api) -> Optional[pd.DataFrame]:
 
     try:
         while True:
-            print(f"  第 {page} 页（offset={offset}）...")
+            print(f"  Page {page} (offset={offset})...")
 
             df = api.us_basic(
                 offset=offset,
@@ -193,56 +193,56 @@ def fetch_us_stock_list(api: ts.pro_api) -> Optional[pd.DataFrame]:
             )
 
             if df is None or len(df) == 0:
-                print(f"  ✓ 第 {page} 页无数据，读取完成")
+                print(f"  ✓ Page {page} returned no data; fetch complete")
                 break
 
             all_data.append(df)
-            print(f"  ✓ 第 {page} 页获取 {len(df)} 只股票")
+            print(f"  ✓ Page {page} fetched {len(df)} stocks")
 
-            # 如果返回数据少于页大小，说明已经到最后一页
+            # Fewer rows than PAGE_SIZE means this is the final page
             if len(df) < PAGE_SIZE:
                 break
 
             offset += PAGE_SIZE
             page += 1
 
-            # 随机休息（最后一页不需要休息）
+            # Random sleep between pages; no sleep needed after the last page
             random_sleep()
 
         if all_data:
             result_df = pd.concat(all_data, ignore_index=True)
-            print(f"✓ 美股列表获取成功，共 {len(result_df)} 只股票（{page} 页）")
+            print(f"✓ US stock list fetched successfully: {len(result_df)} stocks across {page} page(s)")
 
-            # 按分类统计
+            # Print classification stats
             if 'classify' in result_df.columns:
-                print("  - 分类分布：")
+                print("  - Classification distribution:")
                 for classify, count in result_df['classify'].value_counts().items():
-                    print(f"    {classify}: {count} 只")
+                    print(f"    {classify}: {count} stocks")
 
             return result_df
         else:
-            print("[错误] 美股数据为空")
+            print("[ERROR] US stock dataset is empty")
             return None
 
     except Exception as e:
-        print(f"[错误] 获取美股列表失败: {e}")
+        print(f"[ERROR] Failed to fetch US stock list: {e}")
         return None
 
 
 def save_to_csv(df: pd.DataFrame, filename: str, market_name: str) -> bool:
     """
-    保存数据到 CSV 文件
+    Save data to a CSV file.
 
     Args:
-        df: 数据 DataFrame
-        filename: 文件名
-        market_name: 市场名称（用于日志）
+        df: DataFrame to save
+        filename: Output file name
+        market_name: Market label used in logs
 
     Returns:
-        是否保存成功
+        Whether the save succeeded
     """
     if df is None or len(df) == 0:
-        print(f"[跳过] {market_name} 数据为空，不保存文件")
+        print(f"[SKIP] {market_name} data is empty; file will not be written")
         return False
 
     try:
@@ -252,11 +252,11 @@ def save_to_csv(df: pd.DataFrame, filename: str, market_name: str) -> bool:
         df.to_csv(output_path, index=False, encoding='utf-8-sig')
 
         file_size = output_path.stat().st_size / 1024  # KB
-        print(f"✓ {market_name} 数据已保存：{output_path} ({file_size:.2f} KB)")
+        print(f"✓ Saved {market_name} data: {output_path} ({file_size:.2f} KB)")
         return True
 
     except Exception as e:
-        print(f"[错误] 保存 {market_name} 数据失败: {e}")
+        print(f"[ERROR] Failed to save {market_name} data: {e}")
         return False
 
 
@@ -266,12 +266,12 @@ def generate_data_documentation(
     us_df: Optional[pd.DataFrame]
 ):
     """
-    生成数据说明文档
+    Generate the stock-list documentation file.
 
     Args:
-        a_df: A股数据
-        hk_df: 港股数据
-        us_df: 美股数据
+        a_df: A-share data
+        hk_df: Hong Kong stock data
+        us_df: US stock data
     """
     doc_path = OUTPUT_DIR / "README_stock_list.md"
 
@@ -450,61 +450,61 @@ us_stocks = pd.read_csv('data/stock_list_us.csv')
     try:
         with open(doc_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        print(f"✓ 数据说明文档已生成：{doc_path}")
+        print(f"✓ Data documentation generated: {doc_path}")
     except Exception as e:
-        print(f"[错误] 生成说明文档失败: {e}")
+        print(f"[ERROR] Failed to generate documentation: {e}")
 
 
 def main():
-    """主函数"""
+    """Main entrypoint."""
     print("=" * 60)
-    print("Tushare 股票列表获取工具")
+    print("Tushare Stock List Fetch Tool")
     print("=" * 60)
 
-    # 1. 获取 API 实例
+    # 1. Get the API client
     api = get_tushare_api()
     if not api:
         return 1
 
-    # 2. 获取 A股数据
+    # 2. Fetch A-share data
     a_df = fetch_a_stock_list(api)
     if a_df is not None:
-        save_to_csv(a_df, 'stock_list_a.csv', 'A股')
+        save_to_csv(a_df, 'stock_list_a.csv', 'A-shares')
 
-    # 3. 获取港股数据
-    random_sleep()  # 休息后再获取港股
+    # 3. Fetch Hong Kong stock data
+    random_sleep()  # Pause before the next market
     hk_df = fetch_hk_stock_list(api)
     if hk_df is not None:
-        save_to_csv(hk_df, 'stock_list_hk.csv', '港股')
+        save_to_csv(hk_df, 'stock_list_hk.csv', 'Hong Kong stocks')
 
-    # 4. 获取美股数据（分页）
-    random_sleep()  # 休息后再获取美股
+    # 4. Fetch US stock data with pagination
+    random_sleep()  # Pause before the next market
     us_df = fetch_us_stock_list(api)
     if us_df is not None:
-        save_to_csv(us_df, 'stock_list_us.csv', '美股')
+        save_to_csv(us_df, 'stock_list_us.csv', 'US stocks')
 
-    # 5. 生成数据说明文档
-    print("\n正在生成数据说明文档...")
+    # 5. Generate documentation
+    print("\nGenerating data documentation...")
     generate_data_documentation(a_df, hk_df, us_df)
 
-    # 6. 总结
+    # 6. Summary
     print("\n" + "=" * 60)
-    print("任务完成！")
+    print("Done.")
     print("=" * 60)
 
     total_count = 0
     if a_df is not None:
         total_count += len(a_df)
-        print(f"  ✓ A股：{len(a_df)} 只")
+        print(f"  ✓ A-shares: {len(a_df)} stocks")
     if hk_df is not None:
         total_count += len(hk_df)
-        print(f"  ✓ 港股：{len(hk_df)} 只")
+        print(f"  ✓ Hong Kong stocks: {len(hk_df)} stocks")
     if us_df is not None:
         total_count += len(us_df)
-        print(f"  ✓ 美股：{len(us_df)} 只")
+        print(f"  ✓ US stocks: {len(us_df)} stocks")
 
-    print(f"\n总计：{total_count} 只股票")
-    print(f"输出目录：{OUTPUT_DIR}")
+    print(f"\nTotal: {total_count} stocks")
+    print(f"Output directory: {OUTPUT_DIR}")
 
     return 0
 
@@ -513,10 +513,10 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        print("\n\n[中断] 用户取消操作")
+        print("\n\n[INTERRUPTED] Operation cancelled by user")
         sys.exit(1)
     except Exception as e:
-        print(f"\n[错误] 未预期的异常: {e}")
+        print(f"\n[ERROR] Unexpected exception: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

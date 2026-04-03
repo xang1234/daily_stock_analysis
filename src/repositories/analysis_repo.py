@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 ===================================
-分析历史数据访问层
+Analysis History Repository
 ===================================
 
-职责：
-1. 封装分析历史数据的数据库操作
-2. 提供 CRUD 接口
+Responsibilities:
+1. Wrap database operations for analysis history
+2. Provide CRUD-style access helpers
 """
 
 import logging
@@ -19,36 +19,32 @@ logger = logging.getLogger(__name__)
 
 
 class AnalysisRepository:
-    """
-    分析历史数据访问层
-    
-    封装 AnalysisHistory 表的数据库操作
-    """
+    """Repository wrapper around AnalysisHistory table operations."""
     
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         """
-        初始化数据访问层
-        
+        Initialize the repository.
+
         Args:
-            db_manager: 数据库管理器（可选，默认使用单例）
+            db_manager: Optional database manager; defaults to the singleton instance
         """
         self.db = db_manager or DatabaseManager.get_instance()
     
     def get_by_query_id(self, query_id: str) -> Optional[AnalysisHistory]:
         """
-        根据 query_id 获取分析记录
-        
+        Get an analysis record by query_id.
+
         Args:
-            query_id: 查询 ID
-            
+            query_id: Query ID
+
         Returns:
-            AnalysisHistory 对象，不存在返回 None
+            AnalysisHistory object, or None if not found
         """
         try:
             records = self.db.get_analysis_history(query_id=query_id, limit=1)
             return records[0] if records else None
         except Exception as e:
-            logger.error(f"查询分析记录失败: {e}")
+            logger.error("Failed to query analysis record: %s", e)
             return None
     
     def get_list(
@@ -58,15 +54,15 @@ class AnalysisRepository:
         limit: int = 50
     ) -> List[AnalysisHistory]:
         """
-        获取分析记录列表
-        
+        Get a list of analysis records.
+
         Args:
-            code: 股票代码筛选
-            days: 时间范围（天）
-            limit: 返回数量限制
-            
+            code: Optional stock-code filter
+            days: Time range in days
+            limit: Maximum number of returned records
+
         Returns:
-            AnalysisHistory 对象列表
+            List of AnalysisHistory objects
         """
         try:
             return self.db.get_analysis_history(
@@ -75,7 +71,7 @@ class AnalysisRepository:
                 limit=limit
             )
         except Exception as e:
-            logger.error(f"获取分析列表失败: {e}")
+            logger.error("Failed to get analysis list: %s", e)
             return []
     
     def save(
@@ -87,17 +83,17 @@ class AnalysisRepository:
         context_snapshot: Optional[Dict[str, Any]] = None
     ) -> int:
         """
-        保存分析结果
-        
+        Save an analysis result.
+
         Args:
-            result: 分析结果对象
-            query_id: 查询 ID
-            report_type: 报告类型
-            news_content: 新闻内容
-            context_snapshot: 上下文快照
-            
+            result: Analysis result object
+            query_id: Query ID
+            report_type: Report type
+            news_content: News content
+            context_snapshot: Context snapshot
+
         Returns:
-            保存的记录数
+            Number of saved records
         """
         try:
             return self.db.save_analysis_history(
@@ -108,23 +104,23 @@ class AnalysisRepository:
                 context_snapshot=context_snapshot
             )
         except Exception as e:
-            logger.error(f"保存分析结果失败: {e}")
+            logger.error("Failed to save analysis result: %s", e)
             return 0
     
     def count_by_code(self, code: str, days: int = 30) -> int:
         """
-        统计指定股票的分析记录数
-        
+        Count analysis records for a stock.
+
         Args:
-            code: 股票代码
-            days: 时间范围（天）
-            
+            code: Stock code
+            days: Time range in days
+
         Returns:
-            记录数量
+            Number of matching records
         """
         try:
             records = self.db.get_analysis_history(code=code, days=days, limit=1000)
             return len(records)
         except Exception as e:
-            logger.error(f"统计分析记录失败: {e}")
+            logger.error("Failed to count analysis records: %s", e)
             return 0

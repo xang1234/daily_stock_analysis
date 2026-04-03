@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 ===================================
-WebUI 启动脚本
+Web UI Startup Script
 ===================================
 
-用于启动 Web 服务界面。
-直接运行 `python webui.py` 将启动 Web 后端服务。
+Starts the Web service.
+Running `python webui.py` directly will launch the Web backend service.
 
-等效命令：
+Equivalent command:
     python main.py --webui-only
 
 Usage:
@@ -24,15 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> int:
-    """
-    启动 Web 服务
-    """
-    # 兼容旧版环境变量名
+    """Start the Web service."""
+    # Backward compatibility for legacy env var names
     host = os.getenv("WEBUI_HOST", os.getenv("API_HOST", "127.0.0.1"))
     port = int(os.getenv("WEBUI_PORT", os.getenv("API_PORT", "8000")))
 
-    print(f"正在启动 Web 服务: http://{host}:{port}")
-    print(f"API 文档: http://{host}:{port}/docs")
+    print(f"Starting Web service: http://{host}:{port}")
+    print(f"API docs: http://{host}:{port}/docs")
     print()
 
     try:
