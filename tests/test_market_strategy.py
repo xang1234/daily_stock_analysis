@@ -5,12 +5,18 @@ import sys
 import unittest
 from unittest.mock import MagicMock
 
-sys.modules.setdefault("pandas", MagicMock())
-sys.modules.setdefault("src.search_service", MagicMock())
-sys.modules.setdefault("data_provider.base", MagicMock())
+from tests.module_stubs import temporary_sys_modules
 
-from src.core.market_strategy import get_market_strategy_blueprint
-from src.market_analyzer import MarketAnalyzer, MarketOverview
+sys.modules.setdefault("pandas", MagicMock())
+
+with temporary_sys_modules(
+    {
+        "src.search_service": MagicMock(),
+        "data_provider.base": MagicMock(),
+    }
+):
+    from src.core.market_strategy import get_market_strategy_blueprint
+    from src.market_analyzer import MarketAnalyzer, MarketOverview
 
 
 class TestMarketStrategyBlueprint(unittest.TestCase):

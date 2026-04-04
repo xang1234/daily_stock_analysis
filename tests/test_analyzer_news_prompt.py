@@ -6,18 +6,18 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-try:
-    import litellm  # noqa: F401
-except ModuleNotFoundError:
-    sys.modules["litellm"] = MagicMock()
-sys.modules.setdefault("json_repair", SimpleNamespace(repair_json=lambda value: value))
-sys.modules.setdefault("src.storage", SimpleNamespace(persist_llm_usage=MagicMock()))
-sys.modules.setdefault(
-    "data_provider.base",
-    SimpleNamespace(normalize_stock_code=lambda value: value),
-)
+from tests.module_stubs import temporary_sys_modules
 
-from src.analyzer import GeminiAnalyzer
+_ANALYZER_IMPORT_STUBS = {
+    "json_repair": SimpleNamespace(repair_json=lambda value: value),
+    "src.storage": SimpleNamespace(persist_llm_usage=MagicMock()),
+    "data_provider.base": SimpleNamespace(normalize_stock_code=lambda value: value),
+}
+if "litellm" not in sys.modules:
+    _ANALYZER_IMPORT_STUBS["litellm"] = MagicMock()
+
+with temporary_sys_modules(_ANALYZER_IMPORT_STUBS):
+    from src.analyzer import GeminiAnalyzer
 
 
 def _config(report_language: str = "zh") -> SimpleNamespace:

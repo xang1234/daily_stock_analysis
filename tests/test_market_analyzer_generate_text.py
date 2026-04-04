@@ -12,23 +12,26 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-# Stub heavy dependencies before project imports
-for _mod in ("litellm", "google.generativeai", "google.genai", "anthropic"):
-    if _mod not in sys.modules:
-        sys.modules[_mod] = MagicMock()
-sys.modules.setdefault("json_repair", SimpleNamespace(repair_json=lambda value: value))
-sys.modules.setdefault("src.storage", SimpleNamespace(persist_llm_usage=MagicMock()))
-sys.modules.setdefault("src.search_service", SimpleNamespace(SearchService=object))
-sys.modules.setdefault(
-    "data_provider.base",
-    SimpleNamespace(
-        DataFetcherManager=MagicMock(),
-        normalize_stock_code=lambda value: value,
-    ),
-)
-sys.modules.setdefault("pandas", MagicMock())
-
 from unittest.mock import PropertyMock
+
+from tests.module_stubs import temporary_sys_modules
+
+
+def _import_stubs() -> dict[str, object]:
+    stubs = {
+        "json_repair": SimpleNamespace(repair_json=lambda value: value),
+        "src.storage": SimpleNamespace(persist_llm_usage=MagicMock()),
+        "src.search_service": SimpleNamespace(SearchService=object),
+        "data_provider.base": SimpleNamespace(
+            DataFetcherManager=MagicMock(),
+            normalize_stock_code=lambda value: value,
+        ),
+        "pandas": MagicMock(),
+    }
+    for module_name in ("litellm", "google.generativeai", "google.genai", "anthropic"):
+        if module_name not in sys.modules:
+            stubs[module_name] = MagicMock()
+    return stubs
 
 
 # ---------------------------------------------------------------------------
@@ -38,21 +41,23 @@ from unittest.mock import PropertyMock
 class TestAnalyzerGenerateText:
     def _make_analyzer(self):
         """Return a minimally configured GeminiAnalyzer with _call_litellm mocked."""
-        with patch("src.analyzer.get_config") as mock_cfg:
-            cfg = MagicMock()
-            cfg.litellm_model = "gemini/gemini-2.0-flash"
-            cfg.litellm_fallback_models = []
-            cfg.gemini_api_keys = ["sk-gemini-testkey-1234"]
-            cfg.anthropic_api_keys = []
-            cfg.openai_api_keys = []
-            cfg.deepseek_api_keys = []
-            cfg.llm_model_list = []
-            cfg.openai_base_url = None
-            mock_cfg.return_value = cfg
+        with temporary_sys_modules(_import_stubs()):
             from src.analyzer import GeminiAnalyzer
-            analyzer = GeminiAnalyzer.__new__(GeminiAnalyzer)
-            analyzer._router = None
-            return analyzer
+
+            with patch("src.analyzer.get_config") as mock_cfg:
+                cfg = MagicMock()
+                cfg.litellm_model = "gemini/gemini-2.0-flash"
+                cfg.litellm_fallback_models = []
+                cfg.gemini_api_keys = ["sk-gemini-testkey-1234"]
+                cfg.anthropic_api_keys = []
+                cfg.openai_api_keys = []
+                cfg.deepseek_api_keys = []
+                cfg.llm_model_list = []
+                cfg.openai_base_url = None
+                mock_cfg.return_value = cfg
+                analyzer = GeminiAnalyzer.__new__(GeminiAnalyzer)
+                analyzer._router = None
+                return analyzer
 
     def test_generate_text_returns_llm_response(self):
         analyzer = self._make_analyzer()
@@ -97,41 +102,42 @@ class TestAnalyzerGenerateText:
 class TestMarketAnalyzerBypassFix:
     def _make_market_analyzer_with_mock_generate_text(self, return_value="复盘报告"):
         """Return a MarketAnalyzer whose embedded Analyzer.generate_text is mocked."""
-        from src.core.market_profile import CN_PROFILE
-        from src.core.market_strategy import get_market_strategy_blueprint
-        from src.report_language import get_report_labels
+        with temporary_sys_modules(_import_stubs()):
+            from src.core.market_profile import CN_PROFILE
+            from src.core.market_strategy import get_market_strategy_blueprint
+            from src.report_language import get_report_labels
 
-        with patch("src.analyzer.get_config") as mock_cfg, \
-             patch("src.market_analyzer.get_config") as mock_cfg2:
-            cfg = MagicMock()
-            cfg.litellm_model = "gemini/gemini-2.0-flash"
-            cfg.litellm_fallback_models = []
-            cfg.gemini_api_keys = ["sk-gemini-testkey-1234"]
-            cfg.anthropic_api_keys = []
-            cfg.openai_api_keys = []
-            cfg.deepseek_api_keys = []
-            cfg.llm_model_list = []
-            cfg.openai_base_url = None
-            cfg.market_review_region = "cn"
-            mock_cfg.return_value = cfg
-            mock_cfg2.return_value = cfg
+            with patch("src.analyzer.get_config") as mock_cfg, \
+                 patch("src.market_analyzer.get_config") as mock_cfg2:
+                cfg = MagicMock()
+                cfg.litellm_model = "gemini/gemini-2.0-flash"
+                cfg.litellm_fallback_models = []
+                cfg.gemini_api_keys = ["sk-gemini-testkey-1234"]
+                cfg.anthropic_api_keys = []
+                cfg.openai_api_keys = []
+                cfg.deepseek_api_keys = []
+                cfg.llm_model_list = []
+                cfg.openai_base_url = None
+                cfg.market_review_region = "cn"
+                mock_cfg.return_value = cfg
+                mock_cfg2.return_value = cfg
 
-            from src.analyzer import GeminiAnalyzer
-            from src.market_analyzer import MarketAnalyzer
+                from src.analyzer import GeminiAnalyzer
+                from src.market_analyzer import MarketAnalyzer
 
-            analyzer = GeminiAnalyzer.__new__(GeminiAnalyzer)
-            analyzer._router = None
-            analyzer._litellm_available = True
-            analyzer.generate_text = MagicMock(return_value=return_value)
+                analyzer = GeminiAnalyzer.__new__(GeminiAnalyzer)
+                analyzer._router = None
+                analyzer._litellm_available = True
+                analyzer.generate_text = MagicMock(return_value=return_value)
 
-            ma = MarketAnalyzer.__new__(MarketAnalyzer)
-            ma.analyzer = analyzer
-            ma.profile = CN_PROFILE
-            ma.strategy = get_market_strategy_blueprint("cn")
-            ma.region = "cn"
-            ma.report_language = "zh"
-            ma.labels = get_report_labels("zh")
-            return ma
+                ma = MarketAnalyzer.__new__(MarketAnalyzer)
+                ma.analyzer = analyzer
+                ma.profile = CN_PROFILE
+                ma.strategy = get_market_strategy_blueprint("cn")
+                ma.region = "cn"
+                ma.report_language = "zh"
+                ma.labels = get_report_labels("zh")
+                return ma
 
     def test_no_access_to_private_model_attribute(self):
         """generate_text() must be called; _model must never be accessed."""

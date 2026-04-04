@@ -24,39 +24,31 @@ from typing import List, Optional, Dict, Any
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from tests.litellm_stub import ensure_litellm_stub
+from tests.module_stubs import temporary_sys_modules
 
 ensure_litellm_stub()
-sys.modules.setdefault("json_repair", SimpleNamespace(repair_json=lambda value: value))
 sys.modules.setdefault("pandas", MagicMock())
 
-_storage_module = sys.modules.get("src.storage")
-if _storage_module is None:
-    _storage_module = types.ModuleType("src.storage")
-    sys.modules["src.storage"] = _storage_module
-if not hasattr(_storage_module, "get_db"):
-    _storage_module.get_db = MagicMock()
-if not hasattr(_storage_module, "persist_llm_usage"):
-    _storage_module.persist_llm_usage = MagicMock()
+_storage_module = types.ModuleType("src.storage")
+_storage_module.get_db = MagicMock()
+_storage_module.persist_llm_usage = MagicMock()
 
-if "data_provider" not in sys.modules:
-    fake_data_provider = types.ModuleType("data_provider")
-    fake_data_provider.DataFetcherManager = MagicMock()
-    sys.modules["data_provider"] = fake_data_provider
-sys.modules.setdefault(
-    "data_provider.base",
-    SimpleNamespace(normalize_stock_code=lambda value: value),
-)
-sys.modules.setdefault(
-    "data_provider.realtime_types",
-    SimpleNamespace(ChipDistribution=object),
-)
-sys.modules.setdefault(
-    "data_provider.us_index_mapping",
-    SimpleNamespace(is_us_stock_code=lambda code: False),
-)
-sys.modules.setdefault(
-    "src.search_service",
-    SimpleNamespace(
+_fake_data_provider = types.ModuleType("data_provider")
+_fake_data_provider.__path__ = []
+_fake_data_provider.DataFetcherManager = MagicMock()
+_fake_data_provider.is_us_stock_code = lambda code: False
+_fake_data_provider.is_us_index_code = lambda code: False
+_fake_data_provider.is_hk_stock_code = lambda code: False
+
+_PIPELINE_IMPORT_STUBS = {
+    "json_repair": SimpleNamespace(repair_json=lambda value: value),
+    "pandas": MagicMock(),
+    "src.storage": _storage_module,
+    "data_provider": _fake_data_provider,
+    "data_provider.base": SimpleNamespace(normalize_stock_code=lambda value: value),
+    "data_provider.realtime_types": SimpleNamespace(ChipDistribution=object),
+    "data_provider.us_index_mapping": SimpleNamespace(is_us_stock_code=lambda code: False),
+    "src.search_service": SimpleNamespace(
         SearchService=type(
             "_SearchServiceStub",
             (),
@@ -67,10 +59,7 @@ sys.modules.setdefault(
             },
         ),
     ),
-)
-sys.modules.setdefault(
-    "src.services.social_sentiment_service",
-    SimpleNamespace(
+    "src.services.social_sentiment_service": SimpleNamespace(
         SocialSentimentService=type(
             "_SocialSentimentServiceStub",
             (),
@@ -80,14 +69,11 @@ sys.modules.setdefault(
             },
         ),
     ),
-)
-sys.modules.setdefault(
-    "src.stock_analyzer",
-    SimpleNamespace(StockTrendAnalyzer=MagicMock(), TrendAnalysisResult=object),
-)
-sys.modules.setdefault(
-    "src.notification",
-    SimpleNamespace(
+    "src.stock_analyzer": SimpleNamespace(
+        StockTrendAnalyzer=MagicMock(),
+        TrendAnalysisResult=object,
+    ),
+    "src.notification": SimpleNamespace(
         NotificationService=MagicMock(),
         NotificationChannel=SimpleNamespace(
             EMAIL=SimpleNamespace(value="email"),
@@ -101,13 +87,11 @@ sys.modules.setdefault(
             ASTRBOT=SimpleNamespace(value="astrbot"),
         ),
     ),
-)
-sys.modules.setdefault(
-    "bot.models",
-    SimpleNamespace(BotMessage=object),
-)
+    "bot.models": SimpleNamespace(BotMessage=object),
+}
 
-import src.core.pipeline  # noqa: F401  # Ensure patch targets resolve in this test environment.
+with temporary_sys_modules(_PIPELINE_IMPORT_STUBS):
+    import src.core.pipeline  # noqa: F401  # Ensure patch targets resolve in this test environment.
 
 
 def _builtin_strategy_names() -> set[str]:

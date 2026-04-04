@@ -13,15 +13,18 @@ from importlib.util import find_spec
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-try:
-    import litellm  # noqa: F401
-except ModuleNotFoundError:
-    sys.modules["litellm"] = MagicMock()
-sys.modules.setdefault("json_repair", SimpleNamespace(repair_json=lambda value: value))
-sys.modules.setdefault("src.storage", SimpleNamespace(persist_llm_usage=MagicMock()))
+from tests.module_stubs import temporary_sys_modules
 
-from src.analyzer import AnalysisResult
-from src.services.report_renderer import render
+_REPORT_RENDERER_IMPORT_STUBS = {
+    "json_repair": SimpleNamespace(repair_json=lambda value: value),
+    "src.storage": SimpleNamespace(persist_llm_usage=MagicMock()),
+}
+if "litellm" not in sys.modules:
+    _REPORT_RENDERER_IMPORT_STUBS["litellm"] = MagicMock()
+
+with temporary_sys_modules(_REPORT_RENDERER_IMPORT_STUBS):
+    from src.analyzer import AnalysisResult
+    from src.services.report_renderer import render
 
 
 def _make_result(
