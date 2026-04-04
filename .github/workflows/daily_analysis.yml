@@ -32,7 +32,7 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     # Add a timeout guard to avoid hung jobs
-    timeout-minutes: 30
+    timeout-minutes: 90
     
     steps:
       - name: Random startup delay
