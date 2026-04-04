@@ -78,6 +78,26 @@ class TestSensitiveFieldsUsePasswordControl(unittest.TestCase):
                          f"Sensitive fields with non-password ui_control: {violations}")
 
 
+class TestNotificationReportFieldOrdering(unittest.TestCase):
+    """Notification report settings should keep a stable, collision-free order."""
+
+    _REPORT_ORDER_KEYS = (
+        "REPORT_LANGUAGE",
+        "LOG_LANGUAGE",
+        "REPORT_TEMPLATES_DIR",
+        "REPORT_RENDERER_ENABLED",
+        "REPORT_INTEGRITY_ENABLED",
+        "REPORT_INTEGRITY_RETRY",
+        "REPORT_HISTORY_COMPARE_N",
+        "MERGE_EMAIL_NOTIFICATION",
+    )
+
+    def test_report_related_notification_fields_have_unique_increasing_display_order(self):
+        orders = [get_field_definition(key)["display_order"] for key in self._REPORT_ORDER_KEYS]
+        self.assertEqual(orders, sorted(orders))
+        self.assertEqual(len(orders), len(set(orders)))
+
+
 class TestDiscordInteractionPublicKeyField(unittest.TestCase):
     def test_field_definition_exists(self):
         field = get_field_definition("DISCORD_INTERACTIONS_PUBLIC_KEY")

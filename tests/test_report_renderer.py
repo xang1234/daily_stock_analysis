@@ -9,15 +9,25 @@ Tests for Jinja2 report rendering and fallback behavior.
 
 import sys
 import unittest
+from importlib.util import find_spec
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-try:
-    import litellm  # noqa: F401
-except ModuleNotFoundError:
-    sys.modules["litellm"] = MagicMock()
+from tests.module_stubs import temporary_sys_modules
 
-from src.analyzer import AnalysisResult
-from src.services.report_renderer import render
+_REPORT_RENDERER_IMPORT_STUBS = {
+    "json_repair": SimpleNamespace(repair_json=lambda value: value),
+    "src.storage": SimpleNamespace(persist_llm_usage=MagicMock()),
+}
+if "litellm" not in sys.modules:
+    _REPORT_RENDERER_IMPORT_STUBS["litellm"] = MagicMock()
+
+with temporary_sys_modules(
+    _REPORT_RENDERER_IMPORT_STUBS,
+    restore_modules=("src.analyzer", "src.services.report_renderer"),
+):
+    from src.analyzer import AnalysisResult
+    from src.services.report_renderer import render
 
 
 def _make_result(
@@ -52,6 +62,7 @@ def _make_result(
 class TestReportRenderer(unittest.TestCase):
     """Report renderer tests."""
 
+    @unittest.skipUnless(find_spec("jinja2") is not None, "jinja2 not installed")
     def test_render_markdown_summary_only(self) -> None:
         """Markdown platform renders with summary_only."""
         r = _make_result()
@@ -61,6 +72,7 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("贵州茅台", out)
         self.assertIn("持有", out)
 
+    @unittest.skipUnless(find_spec("jinja2") is not None, "jinja2 not installed")
     def test_render_markdown_full(self) -> None:
         """Markdown platform renders full report."""
         r = _make_result()
@@ -69,6 +81,7 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("核心结论", out)
         self.assertIn("作战计划", out)
 
+    @unittest.skipUnless(find_spec("jinja2") is not None, "jinja2 not installed")
     def test_render_wechat(self) -> None:
         """Wechat platform renders."""
         r = _make_result()
@@ -76,6 +89,7 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertIn("贵州茅台", out)
 
+    @unittest.skipUnless(find_spec("jinja2") is not None, "jinja2 not installed")
     def test_render_brief(self) -> None:
         """Brief platform renders 3-5 sentence summary."""
         r = _make_result()
@@ -84,6 +98,7 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("决策简报", out)
         self.assertIn("贵州茅台", out)
 
+    @unittest.skipUnless(find_spec("jinja2") is not None, "jinja2 not installed")
     def test_render_markdown_in_english(self) -> None:
         """Markdown renderer switches headings and summary labels for English reports."""
         r = _make_result(
@@ -98,6 +113,7 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("Summary", out)
         self.assertIn("Buy", out)
 
+    @unittest.skipUnless(find_spec("jinja2") is not None, "jinja2 not installed")
     def test_render_markdown_market_snapshot_uses_template_context(self) -> None:
         """Market snapshot macro should render localized labels with template context."""
         r = _make_result(
@@ -129,12 +145,35 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("Market Snapshot", out)
         self.assertIn("Volume Ratio", out)
 
+    @unittest.skipUnless(find_spec("jinja2") is not None, "jinja2 not installed")
+    def test_render_markdown_fallback_labels_are_localized_in_english(self) -> None:
+        r = _make_result(
+            code="AAPL",
+            name="Apple",
+            operation_advice="Buy",
+            analysis_summary="Constructive setup.",
+            dashboard={},
+            report_language="en",
+        )
+        r.dashboard = None
+        r.buy_reason = "Trend and catalysts are aligned."
+        r.risk_warning = "Watch for valuation compression."
+
+        out = render("markdown", [r], summary_only=False)
+
+        self.assertIsNotNone(out)
+        self.assertIn("Rationale", out)
+        self.assertIn("Risk Warning", out)
+        self.assertNotIn("操作理由", out)
+        self.assertNotIn("风险提示", out)
+
     def test_render_unknown_platform_returns_none(self) -> None:
         """Unknown platform returns None (caller fallback)."""
         r = _make_result()
         out = render("unknown_platform", [r])
         self.assertIsNone(out)
 
+    @unittest.skipUnless(find_spec("jinja2") is not None, "jinja2 not installed")
     def test_render_empty_results_returns_content(self) -> None:
         """Empty results still produces header."""
         out = render("markdown", [], summary_only=True)

@@ -3,10 +3,16 @@
 
 from __future__ import annotations
 
+import csv
+import json
+import logging
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 SUPPORTED_REPORT_LANGUAGES = ("zh", "en")
+SUPPORTED_LOG_LANGUAGES = ("zh", "en", "follow_report")
 
 _REPORT_LANGUAGE_ALIASES = {
     "zh-cn": "zh",
@@ -22,6 +28,13 @@ _REPORT_LANGUAGE_ALIASES = {
     "en_us": "en",
     "en-gb": "en",
     "en_gb": "en",
+}
+
+_LOG_LANGUAGE_ALIASES = {
+    **_REPORT_LANGUAGE_ALIASES,
+    "follow-report": "follow_report",
+    "follow_report": "follow_report",
+    "followreport": "follow_report",
 }
 
 _OPERATION_ADVICE_CANONICAL_MAP = {
@@ -154,6 +167,234 @@ _GENERIC_STOCK_NAME_BY_LANGUAGE = {
     "en": "Unnamed Stock",
 }
 
+_CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+_ENGLISH_STOCK_NAME_BY_CODE = {
+    "600519": "Kweichow Moutai",
+    "000001": "Ping An Bank",
+    "300750": "CATL",
+    "002594": "BYD",
+    "600036": "China Merchants Bank",
+    "601318": "Ping An Insurance",
+    "000858": "Wuliangye",
+    "600276": "Hengrui Pharma",
+    "601012": "LONGi Green Energy",
+    "002475": "Luxshare Precision",
+    "300059": "East Money Information",
+    "002415": "Hikvision",
+    "600900": "China Yangtze Power",
+    "601166": "Industrial Bank",
+    "600028": "Sinopec",
+    "600030": "CITIC Securities",
+    "600031": "Sany Heavy Industry",
+    "600050": "China Unicom",
+    "600104": "SAIC Motor",
+    "600111": "Northern Rare Earth",
+    "600150": "CSSC",
+    "600309": "Wanhua Chemical",
+    "600406": "NARI Technology",
+    "600690": "Haier Smart Home",
+    "600760": "AVIC Shenyang Aircraft",
+    "600809": "Shanxi Fenjiu",
+    "600887": "Yili",
+    "600930": "Huadian New Energy",
+    "601088": "China Shenhua",
+    "601127": "Seres",
+    "601211": "Guotai Haitong",
+    "601225": "Shaanxi Coal",
+    "601288": "Agricultural Bank of China",
+    "601328": "Bank of Communications",
+    "601398": "Industrial and Commercial Bank of China",
+    "601601": "CPIC",
+    "601628": "China Life",
+    "601658": "Postal Savings Bank of China",
+    "601668": "China State Construction",
+    "601728": "China Telecom",
+    "601816": "Beijing-Shanghai High-Speed Railway",
+    "601857": "PetroChina",
+    "601888": "China Tourism Group Duty Free",
+    "601899": "Zijin Mining",
+    "601919": "COSCO Shipping Holdings",
+    "601985": "China National Nuclear Power",
+    "601988": "Bank of China",
+    "603019": "Sugon",
+    "603259": "WuXi AppTec",
+    "603501": "Will Semiconductor",
+    "603993": "CMOC",
+    "688008": "Montage Technology",
+    "688012": "AMEC",
+    "688041": "Hygon Information Technology",
+    "688111": "Kingsoft Office",
+    "688256": "Cambricon",
+    "688981": "SMIC",
+    "AAPL": "Apple",
+    "TSLA": "Tesla",
+    "MSFT": "Microsoft",
+    "GOOGL": "Alphabet Class A",
+    "GOOG": "Alphabet Class C",
+    "AMZN": "Amazon",
+    "NVDA": "NVIDIA",
+    "META": "Meta",
+    "AMD": "AMD",
+    "INTC": "Intel",
+    "BABA": "Alibaba",
+    "PDD": "PDD Holdings",
+    "JD": "JD.com",
+    "BIDU": "Baidu",
+    "NIO": "NIO",
+    "XPEV": "XPeng",
+    "LI": "Li Auto",
+    "COIN": "Coinbase",
+    "MSTR": "Strategy",
+    "00700": "Tencent Holdings",
+    "03690": "Meituan",
+    "01810": "Xiaomi",
+    "09988": "Alibaba",
+    "09618": "JD.com",
+    "09888": "Baidu",
+    "01024": "Kuaishou",
+    "00981": "SMIC",
+    "02015": "Li Auto",
+    "09868": "XPeng",
+    "00005": "HSBC Holdings",
+    "01299": "AIA Group",
+    "00941": "China Mobile",
+    "00883": "CNOOC",
+    "02513": "Zhipu AI",
+    "HK02513": "Zhipu AI",
+}
+
+_ENGLISH_STOCK_NAME_BY_NAME = {
+    "贵州茅台": "Kweichow Moutai",
+    "平安银行": "Ping An Bank",
+    "宁德时代": "CATL",
+    "比亚迪": "BYD",
+    "招商银行": "China Merchants Bank",
+    "中国平安": "Ping An Insurance",
+    "五粮液": "Wuliangye",
+    "恒瑞医药": "Hengrui Pharma",
+    "隆基绿能": "LONGi Green Energy",
+    "立讯精密": "Luxshare Precision",
+    "东方财富": "East Money Information",
+    "海康威视": "Hikvision",
+    "长江电力": "China Yangtze Power",
+    "兴业银行": "Industrial Bank",
+    "中国石化": "Sinopec",
+    "中信证券": "CITIC Securities",
+    "三一重工": "Sany Heavy Industry",
+    "中国联通": "China Unicom",
+    "上汽集团": "SAIC Motor",
+    "北方稀土": "Northern Rare Earth",
+    "中国船舶": "CSSC",
+    "万华化学": "Wanhua Chemical",
+    "国电南瑞": "NARI Technology",
+    "海尔智家": "Haier Smart Home",
+    "中航沈飞": "AVIC Shenyang Aircraft",
+    "山西汾酒": "Shanxi Fenjiu",
+    "伊利股份": "Yili",
+    "华电新能": "Huadian New Energy",
+    "中国神华": "China Shenhua",
+    "赛力斯": "Seres",
+    "国泰海通": "Guotai Haitong",
+    "陕西煤业": "Shaanxi Coal",
+    "农业银行": "Agricultural Bank of China",
+    "交通银行": "Bank of Communications",
+    "工商银行": "Industrial and Commercial Bank of China",
+    "中国太保": "CPIC",
+    "中国人寿": "China Life",
+    "邮储银行": "Postal Savings Bank of China",
+    "中国建筑": "China State Construction",
+    "中国电信": "China Telecom",
+    "京沪高铁": "Beijing-Shanghai High-Speed Railway",
+    "中国石油": "PetroChina",
+    "中国中免": "China Tourism Group Duty Free",
+    "紫金矿业": "Zijin Mining",
+    "中远海控": "COSCO Shipping Holdings",
+    "中国核电": "China National Nuclear Power",
+    "中国银行": "Bank of China",
+    "中科曙光": "Sugon",
+    "药明康德": "WuXi AppTec",
+    "豪威集团": "Will Semiconductor",
+    "洛阳钼业": "CMOC",
+    "澜起科技": "Montage Technology",
+    "中微公司": "AMEC",
+    "海光信息": "Hygon Information Technology",
+    "金山办公": "Kingsoft Office",
+    "寒武纪": "Cambricon",
+    "中芯国际": "SMIC",
+    "苹果": "Apple",
+    "特斯拉": "Tesla",
+    "微软": "Microsoft",
+    "谷歌A": "Alphabet Class A",
+    "谷歌C": "Alphabet Class C",
+    "亚马逊": "Amazon",
+    "英伟达": "NVIDIA",
+    "英特尔": "Intel",
+    "阿里巴巴": "Alibaba",
+    "拼多多": "PDD Holdings",
+    "京东": "JD.com",
+    "百度": "Baidu",
+    "蔚来": "NIO",
+    "小鹏汽车": "XPeng",
+    "理想汽车": "Li Auto",
+    "腾讯控股": "Tencent Holdings",
+    "美团": "Meituan",
+    "小米集团": "Xiaomi",
+    "京东集团": "JD.com",
+    "百度集团": "Baidu",
+    "快手": "Kuaishou",
+    "汇丰控股": "HSBC Holdings",
+    "友邦保险": "AIA Group",
+    "中国移动": "China Mobile",
+    "中国海洋石油": "CNOOC",
+    "智谱": "Zhipu AI",
+}
+
+_CN_MARKET_TERM_ALIASES = {
+    "上证指数": "Shanghai Composite",
+    "上证综指": "Shanghai Composite",
+    "深证成指": "Shenzhen Component",
+    "创业板指": "ChiNext Index",
+    "科创50": "STAR 50",
+    "北证50": "Beijing Stock Exchange 50",
+    "沪深300": "CSI 300",
+    "中证500": "CSI 500",
+    "中证1000": "CSI 1000",
+    "恒生指数": "Hang Seng Index",
+    "恒生科技指数": "Hang Seng Tech Index",
+    "国企指数": "Hang Seng China Enterprises Index",
+    "人工智能": "Artificial Intelligence",
+    "半导体": "Semiconductors",
+    "芯片": "Chips",
+    "算力": "Compute Infrastructure",
+    "机器人": "Robotics",
+    "消费电子": "Consumer Electronics",
+    "新能源车": "NEVs",
+    "锂电池": "Lithium Batteries",
+    "光伏": "Solar",
+    "风电": "Wind Power",
+    "电力": "Power Utilities",
+    "军工": "Defense",
+    "医药": "Healthcare",
+    "创新药": "Innovative Drugs",
+    "券商": "Brokerages",
+    "银行": "Banks",
+    "保险": "Insurance",
+    "地产": "Property",
+    "煤炭": "Coal",
+    "有色金属": "Nonferrous Metals",
+    "稀土": "Rare Earths",
+    "黄金": "Gold",
+    "油气": "Oil & Gas",
+    "航运": "Shipping",
+    "旅游": "Travel",
+    "白酒": "Baijiu",
+    "食品饮料": "Food & Beverage",
+}
+
+logger = logging.getLogger(__name__)
+_MISSING_MARKET_TERM_WARNINGS: set[str] = set()
+
 _REPORT_LABELS: Dict[str, Dict[str, str]] = {
     "zh": {
         "dashboard_title": "决策仪表盘",
@@ -234,6 +475,48 @@ _REPORT_LABELS: Dict[str, Dict[str, str]] = {
         "analysis_model_label": "分析模型",
         "not_investment_advice": "AI生成，仅供参考，不构成投资建议",
         "details_report_hint": "详细报告见",
+        "confidence_label": "置信度",
+        "key_points_label": "核心看点",
+        "reason_label": "操作理由",
+        "risk_warning_heading": "风险提示",
+        "trend_analysis_heading": "走势分析",
+        "outlook_heading": "市场展望",
+        "short_term_outlook_label": "短期（1-3日）",
+        "medium_term_outlook_label": "中期（1-2周）",
+        "technical_heading": "技术面分析",
+        "technical_summary_label": "综合",
+        "ma_section_label": "均线",
+        "volume_section_label": "量能",
+        "pattern_section_label": "形态",
+        "fundamental_heading": "基本面分析",
+        "sector_position_label": "板块地位",
+        "company_highlights_label": "公司亮点",
+        "news_heading": "消息面/情绪面",
+        "news_summary_heading": "新闻摘要",
+        "market_sentiment_heading": "市场情绪",
+        "hot_topics_heading": "相关热点",
+        "analysis_heading": "综合分析",
+        "search_performed_label": "已执行联网搜索",
+        "data_sources_heading": "数据来源",
+        "analysis_error_label": "分析异常",
+        "market_review_title": "大盘复盘",
+        "cn_market_review_title": "A股大盘复盘",
+        "us_market_review_title": "美股大盘复盘",
+        "stock_dashboard_merged_title": "个股决策仪表盘",
+        "market_review_doc_title": "大盘复盘",
+        "follow_up_us_market_review": "以下为美股大盘复盘",
+        "market_summary_section": "市场总结",
+        "index_commentary_section": "指数点评",
+        "fund_flows_section": "资金动向",
+        "sector_highlights_section": "热点解读",
+        "outlook_section": "后市展望",
+        "risk_alerts_section": "风险提示",
+        "strategy_plan_section": "策略计划",
+        "market_review_generated_at_label": "复盘时间",
+        "market_stats_line": "上涨 {up} 家 / 下跌 {down} 家 / 平盘 {flat} 家 | 涨停 {limit_up} / 跌停 {limit_down} | 成交额 {amount:.0f} 亿",
+        "leading_sectors_label": "领涨",
+        "lagging_sectors_label": "领跌",
+        "market_review_indices_header": "| 指数 | 最新 | 涨跌幅 | 成交额(亿) |",
     },
     "en": {
         "dashboard_title": "Decision Dashboard",
@@ -314,6 +597,48 @@ _REPORT_LABELS: Dict[str, Dict[str, str]] = {
         "analysis_model_label": "Model",
         "not_investment_advice": "AI-generated content for reference only. Not investment advice.",
         "details_report_hint": "See detailed report:",
+        "confidence_label": "Confidence",
+        "key_points_label": "Key Points",
+        "reason_label": "Rationale",
+        "risk_warning_heading": "Risk Warning",
+        "trend_analysis_heading": "Trend Analysis",
+        "outlook_heading": "Outlook",
+        "short_term_outlook_label": "Short Term (1-3 days)",
+        "medium_term_outlook_label": "Medium Term (1-2 weeks)",
+        "technical_heading": "Technicals",
+        "technical_summary_label": "Overview",
+        "ma_section_label": "Moving Averages",
+        "volume_section_label": "Volume",
+        "pattern_section_label": "Pattern",
+        "fundamental_heading": "Fundamentals",
+        "sector_position_label": "Sector Position",
+        "company_highlights_label": "Company Highlights",
+        "news_heading": "News Flow",
+        "news_summary_heading": "News Summary",
+        "market_sentiment_heading": "Market Sentiment",
+        "hot_topics_heading": "Hot Topics",
+        "analysis_heading": "Integrated Analysis",
+        "search_performed_label": "Web search performed",
+        "data_sources_heading": "Data Sources",
+        "analysis_error_label": "Analysis Error",
+        "market_review_title": "Market Review",
+        "cn_market_review_title": "China Market Review",
+        "us_market_review_title": "US Market Review",
+        "stock_dashboard_merged_title": "Stock Decision Dashboard",
+        "market_review_doc_title": "Market Review",
+        "follow_up_us_market_review": "US market review follows below",
+        "market_summary_section": "Market Summary",
+        "index_commentary_section": "Index Commentary",
+        "fund_flows_section": "Fund Flows",
+        "sector_highlights_section": "Sector/Theme Highlights",
+        "outlook_section": "Outlook",
+        "risk_alerts_section": "Risk Alerts",
+        "strategy_plan_section": "Strategy Plan",
+        "market_review_generated_at_label": "Review Time",
+        "market_stats_line": "Up {up} / Down {down} / Flat {flat} | Limit Up {limit_up} / Limit Down {limit_down} | Turnover {amount:.0f} bn CNY",
+        "leading_sectors_label": "Leading",
+        "lagging_sectors_label": "Lagging",
+        "market_review_indices_header": "| Index | Last | Change % | Turnover (bn) |",
     },
 }
 
@@ -327,12 +652,45 @@ def normalize_report_language(value: Optional[str], default: str = "zh") -> str:
     return default
 
 
+def normalize_log_language(value: Optional[str], default: str = "zh") -> str:
+    """Normalize log language to zh/en/follow_report."""
+    candidate = (value or default).strip().lower().replace(" ", "_")
+    candidate = _LOG_LANGUAGE_ALIASES.get(candidate, candidate)
+    if candidate in SUPPORTED_LOG_LANGUAGES:
+        return candidate
+    return default
+
+
 def is_supported_report_language_value(value: Optional[str]) -> bool:
     """Return whether the raw value is a supported language code or alias."""
     candidate = (value or "").strip().lower().replace(" ", "_")
     if not candidate:
         return False
     return candidate in SUPPORTED_REPORT_LANGUAGES or candidate in _REPORT_LANGUAGE_ALIASES
+
+
+def is_supported_log_language_value(value: Optional[str]) -> bool:
+    """Return whether the raw value is a supported log language code or alias."""
+    candidate = (value or "").strip().lower().replace(" ", "_")
+    if not candidate:
+        return False
+    return candidate in SUPPORTED_LOG_LANGUAGES or candidate in _LOG_LANGUAGE_ALIASES
+
+
+def resolve_log_language(
+    log_language: Optional[str],
+    report_language: Optional[str] = None,
+) -> str:
+    """Resolve effective log language after applying follow_report."""
+    normalized = normalize_log_language(log_language, default="zh")
+    if normalized == "follow_report":
+        return normalize_report_language(report_language, default="zh")
+    return normalized
+
+
+def pick_localized_text(language: Optional[str], zh_text: str, en_text: str) -> str:
+    """Return zh/en text pair based on normalized output language."""
+    return en_text if normalize_report_language(language) == "en" else zh_text
 
 
 def get_report_labels(language: Optional[str]) -> Dict[str, str]:
@@ -354,6 +712,11 @@ def get_unknown_text(language: Optional[str]) -> str:
 def get_no_data_text(language: Optional[str]) -> str:
     """Return localized data unavailable text."""
     return _NO_DATA_BY_LANGUAGE[normalize_report_language(language)]
+
+
+def contains_cjk_text(value: Any) -> bool:
+    """Return whether a value contains any CJK characters."""
+    return bool(_CJK_PATTERN.search(str(value or "")))
 
 
 def _normalize_lookup_key(value: Any) -> str:
@@ -527,9 +890,21 @@ def get_signal_level(advice: Any, score: Any, language: Optional[str]) -> tuple[
 def get_localized_stock_name(value: Any, code: Any, language: Optional[str]) -> str:
     """Return a localized stock name placeholder when the original name is missing."""
     raw_text = str(value or "").strip()
-    if not _is_placeholder_stock_name(raw_text, code):
+    normalized_language = normalize_report_language(language)
+    if _is_placeholder_stock_name(raw_text, code):
+        if normalized_language == "en":
+            localized_name = _lookup_english_stock_name(raw_text, str(code or "").strip())
+            if localized_name:
+                return localized_name
+        return _GENERIC_STOCK_NAME_BY_LANGUAGE[normalized_language]
+    if normalized_language != "en":
         return raw_text
-    return _GENERIC_STOCK_NAME_BY_LANGUAGE[normalize_report_language(language)]
+    if not contains_cjk_text(raw_text):
+        return raw_text
+
+    code_text = str(code or "").strip()
+    localized_name = _lookup_english_stock_name(raw_text, code_text)
+    return localized_name or raw_text
 
 
 def get_sentiment_label(score: int, language: Optional[str]) -> str:
@@ -555,3 +930,143 @@ def get_sentiment_label(score: int, language: Optional[str]) -> str:
     if score >= 20:
         return "悲观"
     return "极度悲观"
+
+
+def localize_market_term(value: Any, language: Optional[str]) -> str:
+    """Return curated English aliases for major CN market terms with fallback."""
+    normalized_language = normalize_report_language(language)
+    raw_text = str(value or "").strip()
+    if not raw_text or normalized_language != "en":
+        return raw_text
+    if not contains_cjk_text(raw_text):
+        return raw_text
+
+    alias = _CN_MARKET_TERM_ALIASES.get(raw_text)
+    if alias:
+        return alias
+
+    if raw_text not in _MISSING_MARKET_TERM_WARNINGS:
+        logger.warning("Missing English alias for market term: %s", raw_text)
+        _MISSING_MARKET_TERM_WARNINGS.add(raw_text)
+    return raw_text
+
+
+def _stock_code_candidates(code: Any) -> list[str]:
+    raw_code = str(code or "").strip()
+    if not raw_code:
+        return []
+
+    upper_code = raw_code.upper()
+    candidates = [upper_code]
+    stripped = upper_code
+    if stripped.startswith("HK") and len(stripped) > 2:
+        stripped = stripped[2:]
+        if stripped not in candidates:
+            candidates.append(stripped)
+    if "." in upper_code:
+        base = upper_code.split(".", 1)[0]
+        if base not in candidates:
+            candidates.append(base)
+    if raw_code not in candidates:
+        candidates.append(raw_code)
+    return candidates
+
+
+def _looks_like_english_name(value: str) -> bool:
+    if not value:
+        return False
+    if contains_cjk_text(value):
+        return False
+    letters = re.findall(r"[A-Za-z]", value)
+    return bool(letters)
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+@lru_cache(maxsize=1)
+def _load_csv_english_name_mappings() -> Dict[str, str]:
+    mappings: Dict[str, str] = {}
+    data_dir = _project_root() / "data"
+    for filename in ("stock_list_a.csv", "stock_list_hk.csv", "stock_list_us.csv"):
+        csv_path = data_dir / filename
+        if not csv_path.exists():
+            continue
+        try:
+            with open(csv_path, "r", encoding="utf-8-sig") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    row_name = str(row.get("name") or "").strip()
+                    row_enname = str(row.get("enname") or "").strip()
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    symbol = str(row.get("symbol") or "").strip()
+                    if not row_enname or not _looks_like_english_name(row_enname):
+                        continue
+
+                    for candidate in _stock_code_candidates(ts_code) + _stock_code_candidates(symbol):
+                        mappings[candidate] = row_enname
+                    if row_name and row_name not in mappings:
+                        mappings[row_name] = row_enname
+        except Exception as exc:  # pragma: no cover - defensive path
+            logger.debug("Failed to load stock name aliases from %s: %s", csv_path, exc)
+    return mappings
+
+
+@lru_cache(maxsize=1)
+def _load_index_english_name_mappings() -> Dict[str, str]:
+    mappings: Dict[str, str] = {}
+    index_path = _project_root() / "apps" / "dsa-web" / "public" / "stocks.index.json"
+    if not index_path.exists():
+        return mappings
+
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # pragma: no cover - defensive path
+        logger.debug("Failed to load stock index aliases from %s: %s", index_path, exc)
+        return mappings
+
+    for item in data:
+        if not isinstance(item, list) or len(item) < 6:
+            continue
+        canonical_code = str(item[0] or "").strip()
+        display_code = str(item[1] or "").strip()
+        primary_name = str(item[2] or "").strip()
+        aliases = item[5] if isinstance(item[5], list) else []
+
+        english_aliases = [
+            str(alias).strip()
+            for alias in aliases
+            if isinstance(alias, str) and _looks_like_english_name(alias) and not re.fullmatch(r"[A-Z0-9.]+", alias.strip())
+        ]
+        preferred = english_aliases[0] if english_aliases else (primary_name if _looks_like_english_name(primary_name) else "")
+        if not preferred:
+            continue
+
+        for candidate in _stock_code_candidates(canonical_code) + _stock_code_candidates(display_code):
+            mappings[candidate] = preferred
+        if primary_name and primary_name not in mappings:
+            mappings[primary_name] = preferred
+
+    return mappings
+
+
+def _lookup_english_stock_name(name: str, code: str) -> str:
+    for candidate in _stock_code_candidates(code):
+        if candidate in _ENGLISH_STOCK_NAME_BY_CODE:
+            return _ENGLISH_STOCK_NAME_BY_CODE[candidate]
+    if name in _ENGLISH_STOCK_NAME_BY_NAME:
+        return _ENGLISH_STOCK_NAME_BY_NAME[name]
+
+    csv_mappings = _load_csv_english_name_mappings()
+    for candidate in _stock_code_candidates(code):
+        if candidate in csv_mappings:
+            return csv_mappings[candidate]
+    if name in csv_mappings:
+        return csv_mappings[name]
+
+    index_mappings = _load_index_english_name_mappings()
+    for candidate in _stock_code_candidates(code):
+        if candidate in index_mappings:
+            return index_mappings[candidate]
+    return index_mappings.get(name, "")

@@ -100,8 +100,8 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             report_type="full",
         )
 
-        self.assertEqual(result["stock_name"], "Unnamed Stock")
-        self.assertEqual(result["report"]["meta"]["stock_name"], "Unnamed Stock")
+        self.assertEqual(result["stock_name"], "Apple")
+        self.assertEqual(result["report"]["meta"]["stock_name"], "Apple")
 
     def test_build_analysis_report_extracts_fundamental_fields_from_snapshot(self) -> None:
         if _build_analysis_report is None:

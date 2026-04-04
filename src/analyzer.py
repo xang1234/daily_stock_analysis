@@ -13,6 +13,7 @@ A股自选股智能分析系统 - AI分析层
 import json
 import logging
 import math
+import re
 import time
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Tuple
@@ -22,7 +23,10 @@ from json_repair import repair_json
 from litellm import Router
 
 from src.agent.llm_adapter import get_thinking_extra_body
-from src.agent.skills.defaults import CORE_TRADING_SKILL_POLICY_ZH
+from src.agent.skills.defaults import (
+    CORE_TRADING_SKILL_POLICY_EN,
+    CORE_TRADING_SKILL_POLICY_ZH,
+)
 from src.config import (
     Config,
     extra_litellm_params,
@@ -34,6 +38,8 @@ from src.config import (
 from src.storage import persist_llm_usage
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.report_language import (
+    contains_cjk_text,
+    get_localized_stock_name,
     get_signal_level,
     get_no_data_text,
     get_placeholder_text,
@@ -804,6 +810,255 @@ class GeminiAnalyzer:
 - 不要编造价格、财报或新闻事实
 """
 
+    LEGACY_DEFAULT_SYSTEM_PROMPT_EN = """You are a trend-following {market_placeholder} investment analyst responsible for generating a professional Decision Dashboard report.
+
+{guidelines_placeholder}
+
+""" + CORE_TRADING_SKILL_POLICY_EN + """
+
+## Output Format: Decision Dashboard JSON
+
+Return a complete JSON object with this structure:
+
+```json
+{
+  "stock_name": "Common English company name when available",
+  "sentiment_score": 0,
+  "trend_prediction": "Strong Bullish/Bullish/Sideways/Bearish/Strong Bearish",
+  "operation_advice": "Strong Buy/Buy/Hold/Watch/Reduce/Sell/Strong Sell",
+  "decision_type": "buy/hold/sell",
+  "confidence_level": "High/Medium/Low",
+  "dashboard": {
+    "core_conclusion": {
+      "one_sentence": "One-line conclusion",
+      "signal_type": "Buy signal / Hold signal / Sell signal / Risk warning",
+      "time_sensitivity": "Act now / Today / This week / Not urgent",
+      "position_advice": {
+        "no_position": "Action for a user without a position",
+        "has_position": "Action for a user already holding the stock"
+      }
+    },
+    "data_perspective": {
+      "trend_status": {
+        "ma_alignment": "Moving-average structure",
+        "is_bullish": true,
+        "trend_score": 0
+      },
+      "price_position": {
+        "current_price": 0,
+        "ma5": 0,
+        "ma10": 0,
+        "ma20": 0,
+        "bias_ma5": 0,
+        "bias_status": "Safe/Caution/Danger",
+        "support_level": 0,
+        "resistance_level": 0
+      },
+      "volume_analysis": {
+        "volume_ratio": 0,
+        "volume_status": "Expanding/Contracting/Stable",
+        "turnover_rate": 0,
+        "volume_meaning": "Explain what the volume pattern implies"
+      },
+      "chip_structure": {
+        "profit_ratio": 0,
+        "avg_cost": 0,
+        "concentration": 0,
+        "chip_health": "Healthy/Average/Caution"
+      }
+    },
+    "intelligence": {
+      "latest_news": "Recent key development summary",
+      "risk_alerts": ["Risk item 1", "Risk item 2"],
+      "positive_catalysts": ["Catalyst 1", "Catalyst 2"],
+      "earnings_outlook": "Earnings expectations",
+      "sentiment_summary": "One-line sentiment summary"
+    },
+    "battle_plan": {
+      "sniper_points": {
+        "ideal_buy": "Ideal entry",
+        "secondary_buy": "Secondary entry",
+        "stop_loss": "Stop loss",
+        "take_profit": "Target"
+      },
+      "position_strategy": {
+        "suggested_position": "Suggested size",
+        "entry_plan": "Entry plan",
+        "risk_control": "Risk control plan"
+      },
+      "action_checklist": [
+        "Checklist item 1",
+        "Checklist item 2",
+        "Checklist item 3"
+      ]
+    }
+  },
+  "analysis_summary": "Integrated summary",
+  "key_points": "3-5 core points, comma separated",
+  "risk_warning": "Risk warning",
+  "buy_reason": "Rationale",
+  "trend_analysis": "Trend analysis",
+  "short_term_outlook": "1-3 day outlook",
+  "medium_term_outlook": "1-2 week outlook",
+  "technical_analysis": "Technical analysis",
+  "ma_analysis": "Moving-average analysis",
+  "volume_analysis": "Volume analysis",
+  "pattern_analysis": "Pattern analysis",
+  "fundamental_analysis": "Fundamental analysis",
+  "sector_position": "Sector analysis",
+  "company_highlights": "Company highlights and risks",
+  "news_summary": "News summary",
+  "market_sentiment": "Market sentiment",
+  "hot_topics": "Related themes",
+  "search_performed": true,
+  "data_sources": "Data source notes"
+}
+```
+
+## Scoring Guide
+
+- 80-100: Strongly constructive setup with clear upside, risk controls, and catalyst support
+- 60-79: Positive base case with manageable risk and explicit watch items
+- 40-59: Mixed signals; better to wait or stay selective
+- 0-39: Weak setup where risk dominates reward
+
+## Dashboard Principles
+
+1. Lead with the conclusion
+2. Separate guidance for no-position vs holding users
+3. Give exact price levels when possible
+4. Make the checklist visual and decisive
+5. Elevate risk items clearly
+"""
+
+    SYSTEM_PROMPT_EN = """You are a {market_placeholder} investment analyst responsible for generating a professional Decision Dashboard report.
+
+{guidelines_placeholder}
+
+{default_skill_policy_section}
+{skills_section}
+
+## Output Format: Decision Dashboard JSON
+
+Return a full Decision Dashboard JSON object.
+
+Requirements:
+- Keep JSON keys exactly as provided.
+- `decision_type` must remain `buy`, `hold`, or `sell`.
+- All human-readable values must be written in English.
+- Use the listed company name if you cannot confirm a common English name.
+- Never invent prices, earnings numbers, or news facts.
+
+Required structure:
+
+```json
+{
+  "stock_name": "English company name",
+  "sentiment_score": 0,
+  "trend_prediction": "Strong Bullish/Bullish/Sideways/Bearish/Strong Bearish",
+  "operation_advice": "Strong Buy/Buy/Hold/Watch/Reduce/Sell/Strong Sell",
+  "decision_type": "buy/hold/sell",
+  "confidence_level": "High/Medium/Low",
+  "dashboard": {
+    "core_conclusion": {
+      "one_sentence": "Direct decision",
+      "signal_type": "Buy signal/Hold signal/Sell signal/Risk warning",
+      "time_sensitivity": "Act now/Today/This week/Not urgent",
+      "position_advice": {
+        "no_position": "What to do without a position",
+        "has_position": "What to do if already holding"
+      }
+    },
+    "data_perspective": {
+      "trend_status": {
+        "ma_alignment": "Moving-average structure",
+        "is_bullish": true,
+        "trend_score": 0
+      },
+      "price_position": {
+        "current_price": 0,
+        "ma5": 0,
+        "ma10": 0,
+        "ma20": 0,
+        "bias_ma5": 0,
+        "bias_status": "Safe/Caution/Danger",
+        "support_level": 0,
+        "resistance_level": 0
+      },
+      "volume_analysis": {
+        "volume_ratio": 0,
+        "volume_status": "Expanding/Contracting/Stable",
+        "turnover_rate": 0,
+        "volume_meaning": "Interpret the volume pattern"
+      },
+      "chip_structure": {
+        "profit_ratio": 0,
+        "avg_cost": 0,
+        "concentration": 0,
+        "chip_health": "Healthy/Average/Caution"
+      }
+    },
+    "intelligence": {
+      "latest_news": "Latest material development",
+      "risk_alerts": ["Risk 1", "Risk 2"],
+      "positive_catalysts": ["Catalyst 1", "Catalyst 2"],
+      "earnings_outlook": "Earnings outlook",
+      "sentiment_summary": "One-line sentiment summary"
+    },
+    "battle_plan": {
+      "sniper_points": {
+        "ideal_buy": "Ideal entry",
+        "secondary_buy": "Secondary entry",
+        "stop_loss": "Stop loss",
+        "take_profit": "Target"
+      },
+      "position_strategy": {
+        "suggested_position": "Suggested position size",
+        "entry_plan": "Entry plan",
+        "risk_control": "Risk control"
+      },
+      "action_checklist": ["Checklist item 1", "Checklist item 2", "Checklist item 3"]
+    }
+  },
+  "analysis_summary": "Integrated analysis summary",
+  "key_points": "3-5 core points, comma separated",
+  "risk_warning": "Risk warning",
+  "buy_reason": "Rationale",
+  "trend_analysis": "Trend analysis",
+  "short_term_outlook": "1-3 day outlook",
+  "medium_term_outlook": "1-2 week outlook",
+  "technical_analysis": "Technical analysis",
+  "ma_analysis": "Moving-average analysis",
+  "volume_analysis": "Volume analysis",
+  "pattern_analysis": "Pattern analysis",
+  "fundamental_analysis": "Fundamental analysis",
+  "sector_position": "Sector positioning",
+  "company_highlights": "Company highlights or risks",
+  "news_summary": "News summary",
+  "market_sentiment": "Market sentiment",
+  "hot_topics": "Related themes",
+  "search_performed": true,
+  "data_sources": "Data source notes"
+}
+```
+
+## Dashboard Principles
+
+1. Lead with the conclusion
+2. Separate advice for users with and without a position
+3. Provide concrete price levels instead of vague wording
+4. Keep the checklist practical and decisive
+5. Surface risk items prominently
+"""
+
+    TEXT_SYSTEM_PROMPT_EN = """You are a professional stock analysis assistant.
+
+- Base every answer on the supplied data and context
+- If data is insufficient, state the uncertainty clearly
+- Do not invent prices, earnings figures, or news facts
+- When the requested output language is English, keep every human-readable value in English
+"""
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -879,8 +1134,10 @@ class GeminiAnalyzer:
         market_role = get_market_role(stock_code, lang)
         market_guidelines = get_market_guidelines(stock_code, lang)
         skill_instructions, default_skill_policy, use_legacy_default_prompt = self._get_skill_prompt_sections()
+        skill_instructions = self._sanitize_skill_instructions_for_language(skill_instructions, lang)
         if use_legacy_default_prompt:
-            base_prompt = self.LEGACY_DEFAULT_SYSTEM_PROMPT.replace(
+            template = self.LEGACY_DEFAULT_SYSTEM_PROMPT_EN if lang == "en" else self.LEGACY_DEFAULT_SYSTEM_PROMPT
+            base_prompt = template.replace(
                 "{market_placeholder}", market_role
             ).replace(
                 "{guidelines_placeholder}", market_guidelines
@@ -888,12 +1145,14 @@ class GeminiAnalyzer:
         else:
             skills_section = ""
             if skill_instructions:
-                skills_section = f"## 激活的交易技能\n\n{skill_instructions}\n"
+                skills_heading = "## Active Trading Skills" if lang == "en" else "## 激活的交易技能"
+                skills_section = f"{skills_heading}\n\n{skill_instructions}\n"
             default_skill_policy_section = ""
             if default_skill_policy:
                 default_skill_policy_section = f"{default_skill_policy}\n"
             base_prompt = (
-                self.SYSTEM_PROMPT.replace("{market_placeholder}", market_role)
+                (self.SYSTEM_PROMPT_EN if lang == "en" else self.SYSTEM_PROMPT)
+                .replace("{market_placeholder}", market_role)
                 .replace("{guidelines_placeholder}", market_guidelines)
                 .replace("{default_skill_policy_section}", default_skill_policy_section)
                 .replace("{skills_section}", skills_section)
@@ -917,6 +1176,31 @@ class GeminiAnalyzer:
 - `decision_type` 必须保持为 `buy|hold|sell`。
 - 所有面向用户的人类可读文本值必须使用中文。
 """
+
+    @staticmethod
+    def _sanitize_skill_instructions_for_language(skill_instructions: str, language: str) -> str:
+        """Avoid injecting large Chinese-only skill blocks into English prompts."""
+        if normalize_report_language(language) != "en":
+            return skill_instructions
+        cleaned = str(skill_instructions or "").strip()
+        if not cleaned:
+            return ""
+        if contains_cjk_text(cleaned):
+            return (
+                "- Active trading skills are enabled.\n"
+                "- Keep conclusions consistent with the active skill set selected by the caller.\n"
+                "- Do not restate untranslated skill notes; apply them implicitly in the analysis."
+            )
+        return cleaned
+
+    @staticmethod
+    def _get_text_system_prompt(report_language: str) -> str:
+        """Return the free-form text system prompt for the selected language."""
+        return (
+            GeminiAnalyzer.TEXT_SYSTEM_PROMPT_EN
+            if normalize_report_language(report_language) == "en"
+            else GeminiAnalyzer.TEXT_SYSTEM_PROMPT
+        )
 
     def _has_channel_config(self, config: Config) -> bool:
         """Check if multi-channel config (channels / YAML / legacy model_list) is active."""
@@ -1025,7 +1309,9 @@ class GeminiAnalyzer:
         use_channel_router = self._has_channel_config(config)
 
         last_error = None
-        effective_system_prompt = system_prompt or self.TEXT_SYSTEM_PROMPT
+        effective_system_prompt = system_prompt or self._get_text_system_prompt(
+            getattr(config, "report_language", "zh")
+        )
         for model in models_to_try:
             try:
                 model_short = model.split("/")[-1] if "/" in model else model
@@ -1082,6 +1368,7 @@ class GeminiAnalyzer:
         prompt: str,
         max_tokens: int = 2048,
         temperature: float = 0.7,
+        system_prompt: Optional[str] = None,
     ) -> Optional[str]:
         """Public entry point for free-form text generation.
 
@@ -1093,6 +1380,7 @@ class GeminiAnalyzer:
             prompt:      Text prompt to send to the LLM.
             max_tokens:  Maximum tokens in the response (default 2048).
             temperature: Sampling temperature (default 0.7).
+            system_prompt: Optional system prompt override.
 
         Returns:
             Response text, or None if the LLM call fails (error is logged).
@@ -1101,6 +1389,7 @@ class GeminiAnalyzer:
             result = self._call_litellm(
                 prompt,
                 generation_config={"max_tokens": max_tokens, "temperature": temperature},
+                system_prompt=system_prompt,
             )
             if isinstance(result, tuple):
                 text, model_used, usage = result
@@ -1152,6 +1441,8 @@ class GeminiAnalyzer:
             else:
                 # 最后从映射表获取
                 name = STOCK_NAME_MAP.get(code, f'股票{code}')
+        if report_language == "en":
+            name = get_localized_stock_name(name, code, report_language)
         
         # 如果模型不可用，返回默认结果
         if not self.is_available():
@@ -1198,6 +1489,7 @@ class GeminiAnalyzer:
             current_prompt = prompt
             retry_count = 0
             max_retries = config.report_integrity_retry if config.report_integrity_enabled else 0
+            language_retry_used = False
 
             while True:
                 start_time = time.time()
@@ -1222,9 +1514,36 @@ class GeminiAnalyzer:
                 result = self._parse_response(response_text, code, name)
                 result.raw_response = response_text
                 result.search_performed = bool(news_context)
-                result.market_snapshot = self._build_market_snapshot(context)
+                result.market_snapshot = self._build_market_snapshot(context, report_language=report_language)
                 result.model_used = model_used
                 result.report_language = report_language
+
+                if report_language == "en":
+                    mixed_language_paths = self._collect_non_english_paths(result)
+                    if mixed_language_paths:
+                        if not language_retry_used:
+                            current_prompt = self._build_language_retry_prompt(
+                                prompt,
+                                response_text,
+                                mixed_language_paths,
+                                report_language=report_language,
+                            )
+                            language_retry_used = True
+                            logger.warning(
+                                "[LLM Language] Mixed-language English output detected in %s; retrying once",
+                                mixed_language_paths[:12],
+                            )
+                            continue
+
+                        result = self._build_language_fail_safe_result(code, name, report_language)
+                        result.raw_response = response_text
+                        result.search_performed = bool(news_context)
+                        result.market_snapshot = self._build_market_snapshot(context, report_language=report_language)
+                        result.model_used = model_used
+                        logger.error(
+                            "[LLM Language] Mixed-language English output persisted after retry; using fail-safe result"
+                        )
+                        break
 
                 # 内容完整性校验（可选）
                 if not config.report_integrity_enabled:
@@ -1296,6 +1615,13 @@ class GeminiAnalyzer:
         code = context.get('code', 'Unknown')
         report_language = normalize_report_language(report_language)
         _, _, use_legacy_default_prompt = self._get_skill_prompt_sections()
+        if report_language == "en":
+            return self._format_prompt_en(
+                context,
+                name,
+                news_context=news_context,
+                use_legacy_default_prompt=use_legacy_default_prompt,
+            )
         
         # 优先使用上下文中的股票名称（从 realtime_quote 获取）
         stock_name = context.get('stock_name', name)
@@ -1605,28 +1931,232 @@ class GeminiAnalyzer:
 """
         
         return prompt
-    
-    def _format_volume(self, volume: Optional[float]) -> str:
+
+    def _format_prompt_en(
+        self,
+        context: Dict[str, Any],
+        name: str,
+        news_context: Optional[str] = None,
+        *,
+        use_legacy_default_prompt: bool = False,
+    ) -> str:
+        """Build the English Decision Dashboard request prompt."""
+        code = context.get('code', 'Unknown')
+        stock_name = get_localized_stock_name(context.get('stock_name', name), code, "en")
+        if not stock_name or stock_name.startswith("Unnamed Stock"):
+            stock_name = get_localized_stock_name(STOCK_NAME_MAP.get(code, stock_name), code, "en")
+
+        today = context.get('today', {}) or {}
+        realtime = context.get('realtime', {}) or {}
+        chip = context.get('chip', {}) or {}
+        trend = context.get('trend_analysis', {}) or {}
+        unknown_text = get_unknown_text("en")
+
+        news_window_days: Optional[int] = None
+        context_window = context.get("news_window_days")
+        try:
+            if context_window is not None:
+                parsed_window = int(context_window)
+                if parsed_window > 0:
+                    news_window_days = parsed_window
+        except (TypeError, ValueError):
+            news_window_days = None
+        if news_window_days is None:
+            prompt_config = self._get_runtime_config()
+            news_window_days = resolve_news_window_days(
+                news_max_age_days=getattr(prompt_config, "news_max_age_days", 3),
+                news_strategy_profile=getattr(prompt_config, "news_strategy_profile", "short"),
+            )
+
+        lines = [
+            "# Decision Dashboard Analysis Request",
+            "",
+            "## Security Overview",
+            f"- Ticker: **{code}**",
+            f"- Name: **{stock_name}**",
+            f"- Analysis Date: {context.get('date', unknown_text)}",
+            "",
+            "## Price and Technical Data",
+            "",
+            "### Daily Snapshot",
+            f"- Close: {today.get('close', 'N/A')}",
+            f"- Open: {today.get('open', 'N/A')}",
+            f"- High: {today.get('high', 'N/A')}",
+            f"- Low: {today.get('low', 'N/A')}",
+            f"- Change %: {today.get('pct_chg', 'N/A')}%",
+            f"- Volume: {self._format_volume(today.get('volume'), report_language='en')}",
+            f"- Turnover: {self._format_amount(today.get('amount'), report_language='en')}",
+            "",
+            "### Moving Averages",
+            f"- MA5: {today.get('ma5', 'N/A')}",
+            f"- MA10: {today.get('ma10', 'N/A')}",
+            f"- MA20: {today.get('ma20', 'N/A')}",
+        ]
+
+        if realtime:
+            lines.extend([
+                "",
+                "### Realtime Enhancements",
+                f"- Last Price: {realtime.get('price', 'N/A')}",
+                f"- Volume Ratio: {realtime.get('volume_ratio', 'N/A')}",
+                f"- Turnover Rate: {realtime.get('turnover_rate', 'N/A')}%",
+                f"- Dynamic PE: {realtime.get('pe_ratio', 'N/A')}",
+                f"- PB: {realtime.get('pb_ratio', 'N/A')}",
+                f"- Total Market Cap: {self._format_amount(realtime.get('total_mv'), report_language='en')}",
+                f"- Free-float Market Cap: {self._format_amount(realtime.get('circ_mv'), report_language='en')}",
+                f"- 60-day Change: {realtime.get('change_60d', 'N/A')}%",
+            ])
+
+        fundamental_context = context.get("fundamental_context") if isinstance(context, dict) else None
+        earnings_block = fundamental_context.get("earnings", {}) if isinstance(fundamental_context, dict) else {}
+        earnings_data = earnings_block.get("data", {}) if isinstance(earnings_block, dict) else {}
+        financial_report = earnings_data.get("financial_report", {}) if isinstance(earnings_data, dict) else {}
+        dividend_metrics = earnings_data.get("dividend", {}) if isinstance(earnings_data, dict) else {}
+        if isinstance(financial_report, dict) or isinstance(dividend_metrics, dict):
+            financial_report = financial_report if isinstance(financial_report, dict) else {}
+            dividend_metrics = dividend_metrics if isinstance(dividend_metrics, dict) else {}
+            lines.extend([
+                "",
+                "### Earnings and Dividend Context",
+                f"- Latest Report Date: {financial_report.get('report_date', 'N/A')}",
+                f"- Revenue: {financial_report.get('revenue', 'N/A')}",
+                f"- Net Profit Attributable: {financial_report.get('net_profit_parent', 'N/A')}",
+                f"- Operating Cash Flow: {financial_report.get('operating_cash_flow', 'N/A')}",
+                f"- ROE: {financial_report.get('roe', 'N/A')}",
+                f"- TTM Cash Dividend / Share: {dividend_metrics.get('ttm_cash_dividend_per_share', 'N/A')}",
+                f"- TTM Dividend Yield: {dividend_metrics.get('ttm_dividend_yield_pct', 'N/A')}",
+                f"- TTM Dividend Events: {dividend_metrics.get('ttm_event_count', 'N/A')}",
+                "",
+                "If any field is missing or N/A, explicitly say `Data unavailable` instead of inventing an answer.",
+            ])
+
+        if chip:
+            lines.extend([
+                "",
+                "### Chip Structure",
+                f"- Profit Ratio: {chip.get('profit_ratio', 0):.1%}",
+                f"- Average Cost: {chip.get('avg_cost', 'N/A')}",
+                f"- 90% Concentration: {chip.get('concentration_90', 0):.2%}",
+                f"- 70% Concentration: {chip.get('concentration_70', 0):.2%}",
+            ])
+
+        if trend:
+            lines.extend([
+                "",
+                "### Structure Check",
+                f"- Trend Strength: {trend.get('trend_strength', 0)}/100",
+                f"- Bias vs MA5: {trend.get('bias_ma5', 0):+.2f}%",
+                f"- Bias vs MA10: {trend.get('bias_ma10', 0):+.2f}%",
+                f"- Signal Score: {trend.get('signal_score', 0)}/100",
+            ])
+            reasons = trend.get('signal_reasons') or []
+            risks = trend.get('risk_factors') or []
+            if reasons:
+                lines.extend(["- Supporting Factors:"] + [f"  - {item}" for item in reasons if str(item).strip()])
+            if risks:
+                lines.extend(["- Risk Factors:"] + [f"  - {item}" for item in risks if str(item).strip()])
+            if use_legacy_default_prompt:
+                lines.extend([
+                    "",
+                    "Legacy default baseline reminders:",
+                    "- Confirm MA5 > MA10 > MA20 before turning constructive.",
+                    "- If bias vs MA5 is above 5%, default to `Watch` unless risk/reward is exceptionally strong.",
+                ])
+
+        if 'yesterday' in context:
+            lines.extend([
+                "",
+                "### Price/Volume Change vs Previous Session",
+                f"- Volume change vs previous session: {context.get('volume_change_ratio', 'N/A')}x",
+                f"- Price change vs previous session: {context.get('price_change_ratio', 'N/A')}%",
+            ])
+
+        lines.extend(["", "## News and Intelligence"])
+        if news_context:
+            lines.extend([
+                f"- Below is the news-search result set for **{stock_name} ({code})** from the past {news_window_days} day(s).",
+                "- Extract risk alerts, positive catalysts, earnings implications, and the single most relevant latest development.",
+                f"- Every item emitted into `risk_alerts`, `positive_catalysts`, and `latest_news` must include a concrete date within the last {news_window_days} day(s) in `YYYY-MM-DD` format.",
+                "- Ignore stories outside the time window.",
+                "- Ignore stories with unknown publication dates.",
+                "",
+                "```text",
+                news_context,
+                "```",
+            ])
+        else:
+            lines.extend([
+                "- No recent relevant news was found. Lean more heavily on price structure and explicitly state where information is missing.",
+            ])
+
+        if context.get('data_missing'):
+            lines.extend([
+                "",
+                "## Missing Data Guardrail",
+                "- Some realtime or technical inputs are unavailable.",
+                "- Ignore N/A values instead of guessing.",
+                "- For any unsupported technical judgment, say `Data unavailable` plainly in English.",
+            ])
+
+        lines.extend([
+            "",
+            "## Analysis Task",
+            f"Generate the full Decision Dashboard JSON for **{stock_name} ({code})**.",
+            "",
+            "Key requirements:",
+            "- Keep every JSON key exactly unchanged.",
+            "- Keep `decision_type` as `buy`, `hold`, or `sell`.",
+            "- Keep every human-readable value in English.",
+            "- Use the common English company name only when you are confident; otherwise keep the listed company name.",
+            "- Give explicit price levels when the data supports them.",
+            f"- `latest_news`, `risk_alerts`, and `positive_catalysts` must not include items outside the last {news_window_days} day(s) or with unknown dates.",
+        ])
+
+        if context.get('is_index_etf'):
+            lines.extend([
+                "",
+                "Index / ETF constraints:",
+                "- Focus risk analysis on index trend, tracking error, and market liquidity.",
+                "- Do not treat the fund manager's corporate events as stock-specific risk alerts.",
+                "- Base earnings outlook on the index constituents or macro setup, not on the fund manager's income statement.",
+            ])
+
+        lines.extend([
+            "",
+            "You must explicitly answer:",
+            "- Does the current structure justify action now, or should the user wait?",
+            "- What are the ideal entry, secondary entry, stop-loss, and target levels?",
+            "- What should a user with no position do vs a user already holding the stock?",
+            "- Which risks or catalysts actually change the decision?",
+            "",
+            "Return the full JSON only. No prose outside the JSON.",
+        ])
+
+        return "\n".join(lines)
+
+    def _format_volume(self, volume: Optional[float], report_language: str = "zh") -> str:
         """格式化成交量显示"""
         if volume is None:
             return 'N/A'
+        report_language = normalize_report_language(report_language)
         if volume >= 1e8:
-            return f"{volume / 1e8:.2f} 亿股"
+            return f"{volume / 1e8:.2f} {'亿股' if report_language == 'zh' else '100M shares'}"
         elif volume >= 1e4:
-            return f"{volume / 1e4:.2f} 万股"
+            return f"{volume / 1e4:.2f} {'万股' if report_language == 'zh' else '10K shares'}"
         else:
-            return f"{volume:.0f} 股"
+            return f"{volume:.0f} {'股' if report_language == 'zh' else 'shares'}"
     
-    def _format_amount(self, amount: Optional[float]) -> str:
+    def _format_amount(self, amount: Optional[float], report_language: str = "zh") -> str:
         """格式化成交额显示"""
         if amount is None:
             return 'N/A'
+        report_language = normalize_report_language(report_language)
         if amount >= 1e8:
-            return f"{amount / 1e8:.2f} 亿元"
+            return f"{amount / 1e8:.2f} {'亿元' if report_language == 'zh' else 'CNY 100M'}"
         elif amount >= 1e4:
-            return f"{amount / 1e4:.2f} 万元"
+            return f"{amount / 1e4:.2f} {'万元' if report_language == 'zh' else 'CNY 10K'}"
         else:
-            return f"{amount:.0f} 元"
+            return f"{amount:.0f} {'元' if report_language == 'zh' else 'CNY'}"
 
     def _format_percent(self, value: Optional[float]) -> str:
         """格式化百分比显示"""
@@ -1646,11 +2176,12 @@ class GeminiAnalyzer:
         except (TypeError, ValueError):
             return 'N/A'
 
-    def _build_market_snapshot(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_market_snapshot(self, context: Dict[str, Any], report_language: str = "zh") -> Dict[str, Any]:
         """构建当日行情快照（展示用）"""
         today = context.get('today', {}) or {}
         realtime = context.get('realtime', {}) or {}
         yesterday = context.get('yesterday', {}) or {}
+        report_language = normalize_report_language(report_language)
 
         prev_close = yesterday.get('close')
         close = today.get('close')
@@ -1671,7 +2202,7 @@ class GeminiAnalyzer:
                 change_amount = None
 
         snapshot = {
-            "date": context.get('date', '未知'),
+            "date": context.get('date', 'Unknown' if report_language == "en" else '未知'),
             "close": self._format_price(close),
             "open": self._format_price(today.get('open')),
             "high": self._format_price(high),
@@ -1680,8 +2211,8 @@ class GeminiAnalyzer:
             "pct_chg": self._format_percent(today.get('pct_chg')),
             "change_amount": self._format_price(change_amount),
             "amplitude": self._format_percent(amplitude),
-            "volume": self._format_volume(today.get('volume')),
-            "amount": self._format_amount(today.get('amount')),
+            "volume": self._format_volume(today.get('volume'), report_language=report_language),
+            "amount": self._format_amount(today.get('amount'), report_language=report_language),
         }
 
         if realtime:
@@ -1755,9 +2286,119 @@ class GeminiAnalyzer:
             complement,
         ])
 
+    def _build_language_retry_prompt(
+        self,
+        base_prompt: str,
+        previous_response: str,
+        violation_paths: List[str],
+        report_language: str = "zh",
+    ) -> str:
+        """Build an English-only correction prompt when mixed-language text is detected."""
+        if normalize_report_language(report_language) != "en":
+            return base_prompt
+
+        fields = ", ".join(violation_paths[:12]) if violation_paths else "multiple fields"
+        return "\n\n".join([
+            base_prompt,
+            "### English-only correction",
+            (
+                "The previous JSON contained non-English human-readable values in: "
+                f"{fields}. Rewrite the full JSON again."
+            ),
+            "- Keep every JSON key exactly unchanged.",
+            "- Keep `decision_type` as `buy`, `hold`, or `sell`.",
+            "- Rewrite every human-readable value in English.",
+            "- Preserve the same structure, numeric values, booleans, and arrays whenever possible.",
+            "- The only allowed fallback is the original listed company name in `stock_name` when no trusted English alias is available.",
+            previous_response.strip(),
+        ])
+
     def _apply_placeholder_fill(self, result: AnalysisResult, missing_fields: List[str]) -> None:
         """Delegate to module-level apply_placeholder_fill."""
         apply_placeholder_fill(result, missing_fields)
+
+    def _collect_non_english_paths(self, result: AnalysisResult) -> List[str]:
+        """Collect paths that still contain CJK text in English report mode."""
+        payload = {
+            "trend_prediction": result.trend_prediction,
+            "operation_advice": result.operation_advice,
+            "confidence_level": result.confidence_level,
+            "dashboard": result.dashboard,
+            "analysis_summary": result.analysis_summary,
+            "key_points": result.key_points,
+            "risk_warning": result.risk_warning,
+            "buy_reason": result.buy_reason,
+            "trend_analysis": result.trend_analysis,
+            "short_term_outlook": result.short_term_outlook,
+            "medium_term_outlook": result.medium_term_outlook,
+            "technical_analysis": result.technical_analysis,
+            "ma_analysis": result.ma_analysis,
+            "volume_analysis": result.volume_analysis,
+            "pattern_analysis": result.pattern_analysis,
+            "fundamental_analysis": result.fundamental_analysis,
+            "sector_position": result.sector_position,
+            "company_highlights": result.company_highlights,
+            "news_summary": result.news_summary,
+            "market_sentiment": result.market_sentiment,
+            "hot_topics": result.hot_topics,
+            "data_sources": result.data_sources,
+        }
+        violations: List[str] = []
+        self._walk_language_validation(payload, "", violations)
+        return violations
+
+    def _walk_language_validation(self, value: Any, path: str, violations: List[str]) -> None:
+        """Recursively inspect human-readable strings for mixed-language residue."""
+        if isinstance(value, dict):
+            for key, nested_value in value.items():
+                next_path = f"{path}.{key}" if path else str(key)
+                if next_path == "stock_name":
+                    continue
+                self._walk_language_validation(nested_value, next_path, violations)
+            return
+
+        if isinstance(value, list):
+            for index, nested_value in enumerate(value):
+                next_path = f"{path}[{index}]"
+                self._walk_language_validation(nested_value, next_path, violations)
+            return
+
+        if not isinstance(value, str):
+            return
+
+        text = value.strip()
+        if not text:
+            return
+        if re.fullmatch(r"[A-Za-z0-9_./:%+\- ()\[\],]+", text):
+            return
+        if contains_cjk_text(text):
+            violations.append(path or "root")
+
+    def _build_language_fail_safe_result(
+        self,
+        code: str,
+        name: str,
+        report_language: str,
+    ) -> AnalysisResult:
+        """Return a controlled fallback result instead of rendering mixed-language output."""
+        localized_name = get_localized_stock_name(name, code, report_language)
+        return AnalysisResult(
+            code=code,
+            name=localized_name,
+            sentiment_score=50,
+            trend_prediction='Sideways',
+            operation_advice='Watch',
+            decision_type='hold',
+            confidence_level='Low',
+            analysis_summary='English output validation failed after one retry. Review the source data or rerun the analysis.',
+            key_points='English-only validation failed; no reliable dashboard content could be produced.',
+            risk_warning='The model kept returning mixed-language content. Treat this run as incomplete.',
+            buy_reason='No safe rationale available because the language validation failed.',
+            data_sources='Technical data and news context',
+            success=False,
+            error_message='Mixed-language English output validation failed',
+            report_language=report_language,
+        )
 
     def _parse_response(
         self, 

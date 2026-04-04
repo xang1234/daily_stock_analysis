@@ -26,6 +26,11 @@ on:
         required: false
         type: string
         default: "en"
+      log_language:
+        description: "Log language: en, zh, or follow_report"
+        required: false
+        type: string
+        default: "follow_report"
     secrets:
       GEMINI_API_KEY:
         required: false
@@ -67,9 +72,14 @@ jobs:
 
       - name: Run stock analysis
         env:
+          # Stock list is passed via both env var and --stocks CLI arg for
+          # compatibility.  main.py reads STOCK_LIST from env (via config.py)
+          # but --stocks overrides it directly.
           STOCK_LIST: ${{ inputs.stock_list }}
-          REPORT_FORMAT: ${{ inputs.report_format }}
+          REPORT_TYPE: ${{ inputs.report_format }}
           REPORT_LANGUAGE: ${{ inputs.report_language }}
+          LOG_LANGUAGE: ${{ inputs.log_language }}
+          # LLM providers
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -77,9 +87,12 @@ jobs:
           LITELLM_MODEL: ${{ secrets.LITELLM_MODEL }}
           LITELLM_API_BASE: ${{ secrets.LITELLM_API_BASE }}
           LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          # Search APIs (for news/sentiment)
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
-        run: python main.py
+        run: |
+          python main.py \
+            --stocks "${{ inputs.stock_list }}"
 
       - name: Upload analysis reports
         uses: actions/upload-artifact@v4

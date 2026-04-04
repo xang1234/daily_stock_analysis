@@ -23,6 +23,81 @@ from typing import List, Optional, Dict, Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from tests.litellm_stub import ensure_litellm_stub
+from tests.module_stubs import temporary_sys_modules
+
+ensure_litellm_stub()
+sys.modules.setdefault("pandas", MagicMock())
+
+_storage_module = types.ModuleType("src.storage")
+_storage_module.get_db = MagicMock()
+_storage_module.persist_llm_usage = MagicMock()
+
+_fake_data_provider = types.ModuleType("data_provider")
+_fake_data_provider.__path__ = []
+_fake_data_provider.DataFetcherManager = MagicMock()
+_fake_data_provider.is_us_stock_code = lambda code: False
+_fake_data_provider.is_us_index_code = lambda code: False
+_fake_data_provider.is_hk_stock_code = lambda code: False
+
+_PIPELINE_IMPORT_STUBS = {
+    "exchange_calendars": MagicMock(),
+    "json_repair": SimpleNamespace(repair_json=lambda value: value),
+    "pandas": MagicMock(),
+    "src.storage": _storage_module,
+    "data_provider": _fake_data_provider,
+    "data_provider.base": SimpleNamespace(normalize_stock_code=lambda value: value),
+    "data_provider.realtime_types": SimpleNamespace(ChipDistribution=object),
+    "data_provider.us_index_mapping": SimpleNamespace(is_us_stock_code=lambda code: False),
+    "src.search_service": SimpleNamespace(
+        SearchService=type(
+            "_SearchServiceStub",
+            (),
+            {
+                "__init__": lambda self, *args, **kwargs: None,
+                "is_available": False,
+                "is_index_or_etf": staticmethod(lambda code, name: False),
+            },
+        ),
+    ),
+    "src.services.social_sentiment_service": SimpleNamespace(
+        SocialSentimentService=type(
+            "_SocialSentimentServiceStub",
+            (),
+            {
+                "__init__": lambda self, *args, **kwargs: None,
+                "is_available": False,
+            },
+        ),
+    ),
+    "src.stock_analyzer": SimpleNamespace(
+        StockTrendAnalyzer=MagicMock(),
+        TrendAnalysisResult=object,
+    ),
+    "src.notification": SimpleNamespace(
+        NotificationService=MagicMock(),
+        NotificationChannel=SimpleNamespace(
+            EMAIL=SimpleNamespace(value="email"),
+            WECHAT=SimpleNamespace(value="wechat"),
+            FEISHU=SimpleNamespace(value="feishu"),
+            TELEGRAM=SimpleNamespace(value="telegram"),
+            DINGTALK=SimpleNamespace(value="dingtalk"),
+            DISCORD=SimpleNamespace(value="discord"),
+            SLACK=SimpleNamespace(value="slack"),
+            CUSTOM=SimpleNamespace(value="custom"),
+            ASTRBOT=SimpleNamespace(value="astrbot"),
+        ),
+    ),
+    "bot.models": SimpleNamespace(BotMessage=object),
+}
+
+
+def _pipeline_import_scope():
+    return temporary_sys_modules(
+        _PIPELINE_IMPORT_STUBS,
+        restore_modules=("src.core.pipeline", "src.core.trading_calendar"),
+    )
+
 
 def _builtin_strategy_names() -> set[str]:
     strategies_dir = Path(__file__).resolve().parent.parent / "strategies"
@@ -323,7 +398,8 @@ class TestAgentResultConversion(unittest.TestCase):
     def _make_pipeline(self):
         """Create a minimal StockAnalysisPipeline with mocked dependencies."""
         # We need to import and mock carefully to avoid touching real services
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -484,6 +560,32 @@ class TestAgentResultConversion(unittest.TestCase):
         )
         self.assertEqual(result.name, "贵州茅台")
 
+    def test_convert_localizes_english_name_when_alias_exists(self):
+        """English agent results should normalize known CN/HK names to trusted aliases."""
+        pipeline = self._make_pipeline()
+        pipeline.config.report_language = "en"
+
+        from src.agent.executor import AgentResult
+        from src.enums import ReportType
+
+        agent_result = AgentResult(
+            success=True,
+            content="{}",
+            dashboard={
+                "stock_name": "腾讯控股",
+                "sentiment_score": 82,
+                "trend_prediction": "Bullish",
+                "operation_advice": "Buy",
+                "decision_type": "buy",
+            },
+            provider="gemini",
+        )
+
+        result = pipeline._agent_result_to_analysis_result(
+            agent_result, "00700", "腾讯控股", ReportType.SIMPLE, "q-en-name"
+        )
+        self.assertEqual(result.name, "Tencent Holdings")
+
 
 # ============================================================
 # Skill registration in pipeline
@@ -525,7 +627,8 @@ class TestPipelineRouting(unittest.TestCase):
 
     def test_agent_mode_routes_to_agent(self):
         """When agent_mode=True, analyze_stock should call _analyze_with_agent."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -570,7 +673,8 @@ class TestPipelineRouting(unittest.TestCase):
 
     def test_legacy_mode_does_not_call_agent(self):
         """When agent_mode=False, analyze_stock should NOT call _analyze_with_agent."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db') as mock_db, \
              patch('src.core.pipeline.DataFetcherManager') as mock_fm, \
              patch('src.core.pipeline.GeminiAnalyzer') as mock_analyzer, \
@@ -622,7 +726,8 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
 
     def test_analyze_with_agent_uses_resolved_name_for_news_persistence(self):
         """Should use resolved stock name from dashboard for search and DB persistence."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -695,6 +800,202 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
             pipeline.db.save_news_intel.assert_called_once()
             saved_kwargs = pipeline.db.save_news_intel.call_args.kwargs
             self.assertEqual(saved_kwargs["name"], "科创芯片ETF")
+
+    def test_analyze_with_agent_retries_mixed_language_english_output_once(self):
+        """English agent runs should retry once when dashboard text still contains CJK."""
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
+             patch('src.core.pipeline.get_db'), \
+             patch('src.core.pipeline.DataFetcherManager'), \
+             patch('src.core.pipeline.GeminiAnalyzer'), \
+             patch('src.core.pipeline.NotificationService'), \
+             patch('src.core.pipeline.SearchService'), \
+             patch('src.agent.factory.build_agent_executor') as mock_build_executor:
+
+            mock_cfg = MagicMock()
+            mock_cfg.max_workers = 2
+            mock_cfg.agent_mode = True
+            mock_cfg.agent_max_steps = 10
+            mock_cfg.agent_skills = []
+            mock_cfg.bocha_api_keys = []
+            mock_cfg.tavily_api_keys = []
+            mock_cfg.brave_api_keys = []
+            mock_cfg.serpapi_keys = []
+            mock_cfg.searxng_base_urls = []
+            mock_cfg.searxng_public_instances_enabled = False
+            mock_cfg.news_max_age_days = 7
+            mock_cfg.enable_realtime_quote = True
+            mock_cfg.enable_chip_distribution = True
+            mock_cfg.realtime_source_priority = []
+            mock_cfg.save_context_snapshot = False
+            mock_cfg.report_language = "en"
+            mock_cfg.report_integrity_enabled = False
+            mock_config.return_value = mock_cfg
+
+            from src.core.pipeline import StockAnalysisPipeline
+            from src.agent.executor import AgentResult
+            from src.enums import ReportType
+
+            pipeline = StockAnalysisPipeline(config=mock_cfg)
+            pipeline.analyzer._collect_non_english_paths.side_effect = [
+                ["dashboard.core_conclusion.one_sentence"],
+                [],
+            ]
+
+            mixed_agent_result = AgentResult(
+                success=True,
+                content="{}",
+                dashboard={
+                    "stock_name": "腾讯控股",
+                    "sentiment_score": 78,
+                    "trend_prediction": "Bullish",
+                    "operation_advice": "Buy",
+                    "decision_type": "buy",
+                    "dashboard": {"core_conclusion": {"one_sentence": "继续观望"}},
+                },
+                provider="gemini",
+                model="gpt-4o-mini",
+            )
+            english_agent_result = AgentResult(
+                success=True,
+                content="{}",
+                dashboard={
+                    "stock_name": "Tencent Holdings",
+                    "sentiment_score": 79,
+                    "trend_prediction": "Bullish",
+                    "operation_advice": "Buy",
+                    "decision_type": "buy",
+                    "dashboard": {"core_conclusion": {"one_sentence": "Accumulate on pullbacks."}},
+                },
+                provider="gemini",
+                model="gpt-4o-mini",
+            )
+            mock_executor = MagicMock()
+            mock_executor.run.side_effect = [mixed_agent_result, english_agent_result]
+            mock_build_executor.return_value = mock_executor
+
+            pipeline.search_service.is_available = False
+
+            result = pipeline._analyze_with_agent(
+                code="00700",
+                report_type=ReportType.SIMPLE,
+                query_id="q-agent-en",
+                stock_name="腾讯控股",
+                realtime_quote=None,
+                chip_data=None,
+            )
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result.name, "Tencent Holdings")
+            self.assertEqual(result.dashboard["core_conclusion"]["one_sentence"], "Accumulate on pullbacks.")
+            self.assertEqual(mock_executor.run.call_count, 2)
+            retry_task = mock_executor.run.call_args_list[1].args[0]
+            self.assertIn("non-English human-readable values", retry_task)
+
+    def test_analyze_with_agent_uses_fail_safe_when_retry_stays_mixed_language(self):
+        """English agent runs should fail safe after one mixed-language retry."""
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
+             patch('src.core.pipeline.get_db'), \
+             patch('src.core.pipeline.DataFetcherManager'), \
+             patch('src.core.pipeline.GeminiAnalyzer'), \
+             patch('src.core.pipeline.NotificationService'), \
+             patch('src.core.pipeline.SearchService'), \
+             patch('src.agent.factory.build_agent_executor') as mock_build_executor:
+
+            mock_cfg = MagicMock()
+            mock_cfg.max_workers = 2
+            mock_cfg.agent_mode = True
+            mock_cfg.agent_max_steps = 10
+            mock_cfg.agent_skills = []
+            mock_cfg.bocha_api_keys = []
+            mock_cfg.tavily_api_keys = []
+            mock_cfg.brave_api_keys = []
+            mock_cfg.serpapi_keys = []
+            mock_cfg.searxng_base_urls = []
+            mock_cfg.searxng_public_instances_enabled = False
+            mock_cfg.news_max_age_days = 7
+            mock_cfg.enable_realtime_quote = True
+            mock_cfg.enable_chip_distribution = True
+            mock_cfg.realtime_source_priority = []
+            mock_cfg.save_context_snapshot = False
+            mock_cfg.report_language = "en"
+            mock_cfg.report_integrity_enabled = False
+            mock_config.return_value = mock_cfg
+
+            from src.core.pipeline import StockAnalysisPipeline
+            from src.agent.executor import AgentResult
+            from src.enums import ReportType
+            from src.analyzer import AnalysisResult
+
+            pipeline = StockAnalysisPipeline(config=mock_cfg)
+            pipeline.analyzer._collect_non_english_paths.side_effect = [
+                ["dashboard.core_conclusion.one_sentence"],
+                ["dashboard.core_conclusion.one_sentence"],
+            ]
+            pipeline.analyzer._build_language_fail_safe_result.return_value = AnalysisResult(
+                code="00700",
+                name="Tencent Holdings",
+                sentiment_score=50,
+                trend_prediction="Sideways",
+                operation_advice="Watch",
+                decision_type="hold",
+                confidence_level="Low",
+                analysis_summary="English output validation failed after one retry.",
+                risk_warning="The model kept returning mixed-language content.",
+                success=False,
+                error_message="Mixed-language English output validation failed",
+                report_language="en",
+            )
+
+            mixed_agent_result = AgentResult(
+                success=True,
+                content="{}",
+                dashboard={
+                    "stock_name": "腾讯控股",
+                    "sentiment_score": 78,
+                    "trend_prediction": "Bullish",
+                    "operation_advice": "Buy",
+                    "decision_type": "buy",
+                    "dashboard": {"core_conclusion": {"one_sentence": "继续观望"}},
+                },
+                provider="gemini",
+                model="gpt-4o-mini",
+            )
+            retry_mixed_agent_result = AgentResult(
+                success=True,
+                content="{}",
+                dashboard={
+                    "stock_name": "腾讯控股",
+                    "sentiment_score": 76,
+                    "trend_prediction": "Bullish",
+                    "operation_advice": "Buy",
+                    "decision_type": "buy",
+                    "dashboard": {"core_conclusion": {"one_sentence": "等待确认"}},
+                },
+                provider="gemini",
+                model="gpt-4o-mini",
+            )
+            mock_executor = MagicMock()
+            mock_executor.run.side_effect = [mixed_agent_result, retry_mixed_agent_result]
+            mock_build_executor.return_value = mock_executor
+
+            pipeline.search_service.is_available = False
+
+            result = pipeline._analyze_with_agent(
+                code="00700",
+                report_type=ReportType.SIMPLE,
+                query_id="q-agent-failsafe",
+                stock_name="腾讯控股",
+                realtime_quote=None,
+                chip_data=None,
+            )
+
+            self.assertIsNotNone(result)
+            self.assertFalse(result.success)
+            self.assertEqual(result.error_message, "Mixed-language English output validation failed")
+            self.assertEqual(result.name, "Tencent Holdings")
+            self.assertEqual(mock_executor.run.call_count, 2)
 
 
 # ============================================================
@@ -871,7 +1172,8 @@ class TestSafeInt(unittest.TestCase):
 
     def _get_safe_int(self):
         """Get reference to StockAnalysisPipeline._safe_int static method."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -1014,7 +1316,8 @@ class TestSkillActivation(unittest.TestCase):
 
     def test_sentiment_score_parsed_from_dashboard(self):
         """Verify _agent_result_to_analysis_result handles non-numeric sentiment_score."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [文档] 将根 README.md 翻译为英文版入口文档，并将快速开始、配置、Web UI、Agent 问股与示例输出链接统一指向英文说明页
 - [修复] GitHub Actions `daily_analysis` 工作流显式透传 `REPORT_LANGUAGE`，避免仓库变量已设为 `en` 时手动或定时运行仍回退为中文报告
+- [改进] 新增 `LOG_LANGUAGE=zh|en|follow_report`，支持将 GitHub Actions 运行日志单独切换为英文或跟随 `REPORT_LANGUAGE`
+- [修复] 英文模式下的大盘复盘、通知 fallback、模板兜底与 Feishu 文档标题改为统一跟随 `REPORT_LANGUAGE`，避免 `region=cn` 时仍输出中文壳子
+- [修复] 个股英文报告改为使用独立英文 Prompt、英文默认技能基线与混合语言校验重试，避免“中文 Prompt + 英文后缀”导致的混排输出
 - [修复] **MiniMax-M2.7 模型连接测试支持** — 修复 LLM 通道连接测试在 MiniMax-M2.7 模型下返回 "Empty response" 的问题；增加了 `max_tokens` 上限（8→256）以容纳 MiniMax 思考过程，并添加 `content_blocks` 格式解析逻辑统一处理 MiniMax 响应格式差异。
 - [修复] 移除 `HistoryItem` 与 `ReportSummary` 响应 Schema 中 `sentiment_score` 的 `ge=0/le=100` 约束（fixes #942）——历史库中存储的超范围负值或大于 100 的情绪评分不再触发 Pydantic ValidationError，历史列表与详情接口恢复正常返回。
 - [改进] Agent IntelAgent 新增公司公告搜索维度（上交所/深交所/cninfo）与主力资金流工具（get_capital_flow），修复 Agent 模式下公告和资金流数据经常缺失的问题

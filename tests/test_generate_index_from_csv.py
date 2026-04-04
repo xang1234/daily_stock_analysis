@@ -280,6 +280,10 @@ class TestAliases:
         result = generate_aliases('未知股票', 'CN')
         assert result == []
 
+    def test_enname_is_added_as_alias_for_cn_hk_entries(self):
+        result = generate_aliases('腾讯控股', 'HK', 'Tencent Holdings')
+        assert 'Tencent Holdings' in result
+
 
 class TestOutputFormat:
     """测试输出格式"""

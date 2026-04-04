@@ -11,6 +11,7 @@ A股自选股智能分析系统 - 核心分析流水线
 4. 提供股票分析的核心功能
 """
 
+import json
 import logging
 import threading
 import time
@@ -31,6 +32,7 @@ from src.analyzer import GeminiAnalyzer, AnalysisResult, fill_chip_structure_if_
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.notification import NotificationService, NotificationChannel
 from src.report_language import (
+    get_localized_stock_name,
     get_unknown_text,
     localize_confidence_level,
     normalize_report_language,
@@ -732,6 +734,16 @@ class StockAnalysisPipeline:
 
             # 转换为 AnalysisResult
             result = self._agent_result_to_analysis_result(agent_result, code, stock_name, report_type, query_id)
+            result = self._enforce_agent_english_output(
+                executor=executor,
+                initial_context=initial_context,
+                agent_result=agent_result,
+                result=result,
+                code=code,
+                stock_name=stock_name,
+                report_type=report_type,
+                query_id=query_id,
+            )
             if result:
                 result.query_id = query_id
             # Agent weak integrity: placeholder fill only, no LLM retry
@@ -800,6 +812,144 @@ class StockAnalysisPipeline:
             logger.exception(f"[{code}] Agent 详细错误信息:")
             return None
 
+    def _collect_agent_language_violations(self, result: AnalysisResult) -> List[str]:
+        """Reuse analyzer-side English validation when available."""
+        collector = getattr(self.analyzer, "_collect_non_english_paths", None)
+        if not callable(collector):
+            return []
+        try:
+            violations = collector(result)
+        except Exception as e:
+            logger.debug("Agent English validation skipped: %s", e)
+            return []
+        if not isinstance(violations, list):
+            return []
+        return [str(item) for item in violations if item]
+
+    def _build_agent_english_retry_task(
+        self,
+        code: str,
+        stock_name: str,
+        violation_paths: List[str],
+        previous_dashboard: Optional[Dict[str, Any]],
+    ) -> str:
+        """Build a corrective retry request for mixed-language agent output."""
+        localized_name = get_localized_stock_name(stock_name, code, "en")
+        fields = ", ".join(violation_paths[:12]) if violation_paths else "multiple fields"
+        previous_payload = json.dumps(previous_dashboard or {}, ensure_ascii=False, indent=2)
+        return (
+            f"Rebuild the decision dashboard JSON for {localized_name} ({code}) in English only.\n"
+            f"The previous JSON contained non-English human-readable values in: {fields}.\n"
+            "- Keep every JSON key exactly unchanged.\n"
+            "- Keep `decision_type` as `buy`, `hold`, or `sell`.\n"
+            "- Rewrite every human-readable value in English.\n"
+            "- Preserve the same structure, numeric values, booleans, and arrays whenever possible.\n"
+            "- The only allowed fallback is the original listed company name in `stock_name` when no trusted English alias exists.\n"
+            "Previous JSON:\n"
+            f"{previous_payload}"
+        )
+
+    def _build_agent_language_fail_safe_result(
+        self,
+        code: str,
+        stock_name: str,
+        *,
+        model_used: Optional[str] = None,
+    ) -> AnalysisResult:
+        """Return the shared English fail-safe result for agent runs."""
+        builder = getattr(self.analyzer, "_build_language_fail_safe_result", None)
+        if callable(builder):
+            result = builder(code, stock_name, "en")
+        else:
+            result = AnalysisResult(
+                code=code,
+                name=get_localized_stock_name(stock_name, code, "en"),
+                sentiment_score=50,
+                trend_prediction="Sideways",
+                operation_advice="Watch",
+                decision_type="hold",
+                confidence_level="Low",
+                analysis_summary="English output validation failed after one retry. Review the source data or rerun the analysis.",
+                key_points="English-only validation failed; no reliable dashboard content could be produced.",
+                risk_warning="The model kept returning mixed-language content. Treat this run as incomplete.",
+                buy_reason="No safe rationale available because the language validation failed.",
+                data_sources="agent output",
+                success=False,
+                error_message="Mixed-language English output validation failed",
+                report_language="en",
+            )
+        result.model_used = model_used
+        return result
+
+    def _enforce_agent_english_output(
+        self,
+        *,
+        executor,
+        initial_context: Dict[str, Any],
+        agent_result,
+        result: Optional[AnalysisResult],
+        code: str,
+        stock_name: str,
+        report_type: ReportType,
+        query_id: str,
+    ) -> Optional[AnalysisResult]:
+        """Retry agent output once when English runs still contain mixed-language narrative text."""
+        report_language = normalize_report_language(getattr(self.config, "report_language", "zh"))
+        if report_language != "en" or result is None:
+            return result
+
+        mixed_language_paths = self._collect_agent_language_violations(result)
+        if not mixed_language_paths:
+            return result
+
+        logger.warning(
+            "[Agent Language] Mixed-language English output detected in %s; retrying once",
+            mixed_language_paths[:12],
+        )
+
+        retry_context = dict(initial_context or {})
+        retry_context["report_language"] = "en"
+        retry_context["stock_name"] = get_localized_stock_name(stock_name, code, "en")
+        retry_task = self._build_agent_english_retry_task(
+            code,
+            stock_name,
+            mixed_language_paths,
+            getattr(agent_result, "dashboard", None),
+        )
+
+        try:
+            retry_agent_result = executor.run(retry_task, context=retry_context)
+            retry_result = self._agent_result_to_analysis_result(
+                retry_agent_result,
+                code,
+                stock_name,
+                report_type,
+                query_id,
+            )
+        except Exception as e:
+            logger.error("[Agent Language] English-only retry failed: %s", e)
+            return self._build_agent_language_fail_safe_result(
+                code,
+                stock_name,
+                model_used=getattr(result, "model_used", None),
+            )
+
+        retry_mixed_paths = self._collect_agent_language_violations(retry_result) if retry_result else []
+        if retry_result is not None and not retry_mixed_paths:
+            return retry_result
+
+        logger.error(
+            "[Agent Language] Mixed-language English output persisted after retry; using fail-safe result"
+        )
+        return self._build_agent_language_fail_safe_result(
+            code,
+            stock_name,
+            model_used=(
+                getattr(retry_result, "model_used", None)
+                or getattr(result, "model_used", None)
+            ),
+        )
+
     def _agent_result_to_analysis_result(
         self, agent_result, code: str, stock_name: str, report_type: ReportType, query_id: str
     ) -> AnalysisResult:
@@ -865,6 +1015,9 @@ class StockAnalysisPipeline:
             result.operation_advice = "Watch" if report_language == "en" else "观望"
             if not result.error_message:
                 result.error_message = "Agent failed to generate a valid decision dashboard" if report_language == "en" else "Agent 未能生成有效的决策仪表盘"
+
+        if report_language == "en":
+            result.name = get_localized_stock_name(result.name, code, report_language)
 
         return result
 

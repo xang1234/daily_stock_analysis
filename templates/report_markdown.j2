@@ -135,10 +135,10 @@
 
 {% if not dashboard %}
 {% if result.buy_reason %}
-**💡 操作理由**: {{ result.buy_reason }}
+**💡 {{ labels.reason_label }}**: {{ result.buy_reason }}
 {% endif %}
 {% if result.risk_warning %}
-**⚠️ 风险提示**: {{ result.risk_warning }}
+**⚠️ {{ labels.risk_warning_heading }}**: {{ result.risk_warning }}
 {% endif %}
 {% endif %}
 
@@ -156,4 +156,4 @@
 {% endfor %}
 {% endif %}
 
-*{{ labels.generated_at_label }}：{{ report_timestamp }}*
+*{{ labels.generated_at_label }}: {{ report_timestamp }}*

@@ -34,6 +34,8 @@ setup_logging(
     log_prefix="api_server",
     console_level=level,
     extra_quiet_loggers=['uvicorn', 'fastapi'],
+    log_language=getattr(config, "log_language", "zh"),
+    report_language=getattr(config, "report_language", "zh"),
 )
 
 # Import the app instance from api.app

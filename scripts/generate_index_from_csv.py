@@ -353,6 +353,8 @@ def parse_stock_row(row: Dict[str, str], preferred_market: Optional[str] = None)
         'ts_code': ts_code,
         'symbol': display_code,
         'name': name,
+        'name_native': row.get('name', '').strip(),
+        'english_name': row.get('enname', '').strip(),
         'market': market,
     }
 
@@ -392,7 +394,7 @@ def determine_market(ts_code: str) -> str:
     return 'CN'
 
 
-def generate_aliases(name: str, market: str) -> List[str]:
+def generate_aliases(name: str, market: str, english_name: Optional[str] = None) -> List[str]:
     """
     Generate stock aliases
 
@@ -473,7 +475,16 @@ def generate_aliases(name: str, market: str) -> List[str]:
     if name in alias_map:
         aliases.extend(alias_map[name])
 
-    return aliases
+    cleaned_english_name = (english_name or '').strip()
+    if cleaned_english_name and cleaned_english_name != name and cleaned_english_name not in aliases:
+        aliases.append(cleaned_english_name)
+
+    deduped = []
+    for alias in aliases:
+        if alias and alias not in deduped:
+            deduped.append(alias)
+
+    return deduped
 
 
 def build_stock_index(stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -502,7 +513,7 @@ def build_stock_index(stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         pinyin_full, pinyin_abbr = generate_pinyin(name)
 
         # Generate aliases.
-        aliases = generate_aliases(name, market)
+        aliases = generate_aliases(name, market, stock.get('english_name'))
 
         index.append({
             "canonicalCode": ts_code,    # Example: 000001.SZ, AAPL
