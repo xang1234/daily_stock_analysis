@@ -1224,7 +1224,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "default_value": "true",
         "options": [],
         "validation": {},
-        "display_order": 58,
+        "display_order": 60,
     },
     "REPORT_INTEGRITY_RETRY": {
         "title": "Report Integrity Retry",
@@ -1238,7 +1238,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "default_value": "1",
         "options": [],
         "validation": {"min": 0, "max": 3},
-        "display_order": 59,
+        "display_order": 61,
     },
     "REPORT_HISTORY_COMPARE_N": {
         "title": "Report History Compare N",
@@ -1252,7 +1252,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "default_value": "0",
         "options": [],
         "validation": {"min": 0, "max": 10},
-        "display_order": 60,
+        "display_order": 62,
     },
     "MERGE_EMAIL_NOTIFICATION": {
         "title": "Merge Email Notification",
@@ -1266,7 +1266,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "default_value": "false",
         "options": [],
         "validation": {},
-        "display_order": 61,
+        "display_order": 63,
     },
     "SCHEDULE_TIME": {
         "title": "Schedule Time",
