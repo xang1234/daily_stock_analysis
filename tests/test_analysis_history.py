@@ -498,7 +498,7 @@ class AnalysisHistoryTestCase(unittest.TestCase):
         self.assertIsNotNone(markdown)
         self.assertIn("Stock Analysis Report", markdown)
         self.assertIn("Core Conclusion", markdown)
-        self.assertIn("Unnamed Stock (AAPL)", markdown)
+        self.assertIn("Apple (AAPL)", markdown)
         self.assertNotIn("核心结论", markdown)
 
     def test_history_detail_localizes_english_summary_fields(self) -> None:
@@ -537,7 +537,7 @@ class AnalysisHistoryTestCase(unittest.TestCase):
         report = get_history_detail(str(record_id), db_manager=self.db)
 
         self.assertEqual(report.meta.report_language, "en")
-        self.assertEqual(report.meta.stock_name, "Unnamed Stock")
+        self.assertEqual(report.meta.stock_name, "Apple")
         self.assertEqual(report.summary.operation_advice, "Buy")
         self.assertEqual(report.summary.trend_prediction, "Bullish")
         self.assertEqual(report.summary.sentiment_label, "Bullish")

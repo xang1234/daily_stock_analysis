@@ -52,7 +52,7 @@ from typing import List, Tuple
 from data_provider.base import canonical_stock_code
 from src.webui_frontend import prepare_webui_frontend_assets
 from src.config import get_config, Config
-from src.logging_config import setup_logging
+from src.logging_config import setup_logging, translate_runtime_log_text
 from src.report_language import (
     get_localized_stock_name,
     get_report_labels,
@@ -145,6 +145,15 @@ def _setup_bootstrap_logging(debug: bool = False) -> None:
             logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
         )
         root.addHandler(handler)
+
+
+def _bootstrap_log_message(message: str) -> str:
+    """Resolve early log copy using env-based language defaults before config loads."""
+    return translate_runtime_log_text(
+        message,
+        log_language=os.getenv("LOG_LANGUAGE", "zh"),
+        report_language=os.getenv("REPORT_LANGUAGE", "zh"),
+    )
 
 
 def _get_stock_analysis_pipeline():
@@ -682,7 +691,9 @@ def _resolve_scheduled_stock_codes(stock_codes: Optional[List[str]]) -> Optional
     """Scheduled runs should always read the latest persisted watchlist."""
     if stock_codes is not None:
         logger.warning(
-            "Detected --stocks in scheduled mode; scheduled runs will ignore the startup snapshot and reload the latest STOCK_LIST before each run."
+            _bootstrap_log_message(
+                "定时模式下检测到 --stocks 参数；计划执行将忽略启动时股票快照，并在每次运行前重新读取最新的 STOCK_LIST。"
+            )
         )
     return None
 
@@ -746,7 +757,7 @@ def main() -> int:
     try:
         config = get_config()
     except Exception as exc:
-        logger.exception("Failed to load config: %s", exc)
+        logger.exception(_bootstrap_log_message("加载配置失败: %s"), exc)
         return 1
 
     # Configure logging to both console and file
