@@ -1,0 +1,90 @@
+# ─────��────────────────────────────────────────────────────────────
+# IMPORTANT: This file is a REFERENCE COPY.
+# It must be added to the daily_stock_analysis repo at:
+#   .github/workflows/analyze_for_caller.yml
+#
+# This workflow exposes daily_stock_analysis as a reusable workflow
+# that can be called from other repos via workflow_call.
+# ───────────────────────────────────────────��──────────────────────
+
+name: Stock Analysis (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      stock_list:
+        description: "Comma-separated US stock tickers (e.g., AAPL,NVDA,MSFT)"
+        required: true
+        type: string
+      report_format:
+        description: "Report format: full, brief, simple"
+        required: false
+        type: string
+        default: "full"
+      report_language:
+        description: "Report language: en, zh"
+        required: false
+        type: string
+        default: "en"
+    secrets:
+      GEMINI_API_KEY:
+        required: false
+      GOOGLE_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      OPENAI_API_BASE:
+        required: false
+      LITELLM_MODEL:
+        required: false
+      LITELLM_API_BASE:
+        required: false
+      LITELLM_API_KEY:
+        required: false
+      TAVILY_API_KEY:
+        required: false
+      SERPER_API_KEY:
+        required: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create working directories
+        run: mkdir -p data logs reports
+
+      - name: Run stock analysis
+        env:
+          STOCK_LIST: ${{ inputs.stock_list }}
+          REPORT_FORMAT: ${{ inputs.report_format }}
+          REPORT_LANGUAGE: ${{ inputs.report_language }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+          LITELLM_MODEL: ${{ secrets.LITELLM_MODEL }}
+          LITELLM_API_BASE: ${{ secrets.LITELLM_API_BASE }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+        run: python main.py
+
+      - name: Upload analysis reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-reports
+          path: reports/
+          retention-days: 7
+          if-no-files-found: warn
