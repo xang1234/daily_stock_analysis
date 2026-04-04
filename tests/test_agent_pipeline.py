@@ -41,6 +41,7 @@ _fake_data_provider.is_us_index_code = lambda code: False
 _fake_data_provider.is_hk_stock_code = lambda code: False
 
 _PIPELINE_IMPORT_STUBS = {
+    "exchange_calendars": MagicMock(),
     "json_repair": SimpleNamespace(repair_json=lambda value: value),
     "pandas": MagicMock(),
     "src.storage": _storage_module,
