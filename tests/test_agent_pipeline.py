@@ -91,8 +91,12 @@ _PIPELINE_IMPORT_STUBS = {
     "bot.models": SimpleNamespace(BotMessage=object),
 }
 
-with temporary_sys_modules(_PIPELINE_IMPORT_STUBS):
-    import src.core.pipeline  # noqa: F401  # Ensure patch targets resolve in this test environment.
+
+def _pipeline_import_scope():
+    return temporary_sys_modules(
+        _PIPELINE_IMPORT_STUBS,
+        restore_modules=("src.core.pipeline", "src.core.trading_calendar"),
+    )
 
 
 def _builtin_strategy_names() -> set[str]:
@@ -394,7 +398,8 @@ class TestAgentResultConversion(unittest.TestCase):
     def _make_pipeline(self):
         """Create a minimal StockAnalysisPipeline with mocked dependencies."""
         # We need to import and mock carefully to avoid touching real services
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -622,7 +627,8 @@ class TestPipelineRouting(unittest.TestCase):
 
     def test_agent_mode_routes_to_agent(self):
         """When agent_mode=True, analyze_stock should call _analyze_with_agent."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -667,7 +673,8 @@ class TestPipelineRouting(unittest.TestCase):
 
     def test_legacy_mode_does_not_call_agent(self):
         """When agent_mode=False, analyze_stock should NOT call _analyze_with_agent."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db') as mock_db, \
              patch('src.core.pipeline.DataFetcherManager') as mock_fm, \
              patch('src.core.pipeline.GeminiAnalyzer') as mock_analyzer, \
@@ -719,7 +726,8 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
 
     def test_analyze_with_agent_uses_resolved_name_for_news_persistence(self):
         """Should use resolved stock name from dashboard for search and DB persistence."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -795,7 +803,8 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
 
     def test_analyze_with_agent_retries_mixed_language_english_output_once(self):
         """English agent runs should retry once when dashboard text still contains CJK."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -885,7 +894,8 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
 
     def test_analyze_with_agent_uses_fail_safe_when_retry_stays_mixed_language(self):
         """English agent runs should fail safe after one mixed-language retry."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -1162,7 +1172,8 @@ class TestSafeInt(unittest.TestCase):
 
     def _get_safe_int(self):
         """Get reference to StockAnalysisPipeline._safe_int static method."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
@@ -1305,7 +1316,8 @@ class TestSkillActivation(unittest.TestCase):
 
     def test_sentiment_score_parsed_from_dashboard(self):
         """Verify _agent_result_to_analysis_result handles non-numeric sentiment_score."""
-        with patch('src.core.pipeline.get_config') as mock_config, \
+        with _pipeline_import_scope(), \
+             patch('src.core.pipeline.get_config') as mock_config, \
              patch('src.core.pipeline.get_db'), \
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \

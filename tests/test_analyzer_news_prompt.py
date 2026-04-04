@@ -16,7 +16,7 @@ _ANALYZER_IMPORT_STUBS = {
 if "litellm" not in sys.modules:
     _ANALYZER_IMPORT_STUBS["litellm"] = MagicMock()
 
-with temporary_sys_modules(_ANALYZER_IMPORT_STUBS):
+with temporary_sys_modules(_ANALYZER_IMPORT_STUBS, restore_modules=("src.analyzer",)):
     from src.analyzer import GeminiAnalyzer
 
 

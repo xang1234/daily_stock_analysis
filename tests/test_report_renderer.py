@@ -22,7 +22,10 @@ _REPORT_RENDERER_IMPORT_STUBS = {
 if "litellm" not in sys.modules:
     _REPORT_RENDERER_IMPORT_STUBS["litellm"] = MagicMock()
 
-with temporary_sys_modules(_REPORT_RENDERER_IMPORT_STUBS):
+with temporary_sys_modules(
+    _REPORT_RENDERER_IMPORT_STUBS,
+    restore_modules=("src.analyzer", "src.services.report_renderer"),
+):
     from src.analyzer import AnalysisResult
     from src.services.report_renderer import render
 

@@ -13,7 +13,8 @@ with temporary_sys_modules(
     {
         "src.search_service": MagicMock(),
         "data_provider.base": MagicMock(),
-    }
+    },
+    restore_modules=("src.market_analyzer",),
 ):
     from src.core.market_strategy import get_market_strategy_blueprint
     from src.market_analyzer import MarketAnalyzer, MarketOverview

@@ -41,7 +41,10 @@ def _import_stubs() -> dict[str, object]:
 class TestAnalyzerGenerateText:
     def _make_analyzer(self):
         """Return a minimally configured GeminiAnalyzer with _call_litellm mocked."""
-        with temporary_sys_modules(_import_stubs()):
+        with temporary_sys_modules(
+            _import_stubs(),
+            restore_modules=("src.analyzer",),
+        ):
             from src.analyzer import GeminiAnalyzer
 
             with patch("src.analyzer.get_config") as mock_cfg:
@@ -102,7 +105,10 @@ class TestAnalyzerGenerateText:
 class TestMarketAnalyzerBypassFix:
     def _make_market_analyzer_with_mock_generate_text(self, return_value="复盘报告"):
         """Return a MarketAnalyzer whose embedded Analyzer.generate_text is mocked."""
-        with temporary_sys_modules(_import_stubs()):
+        with temporary_sys_modules(
+            _import_stubs(),
+            restore_modules=("src.analyzer", "src.market_analyzer"),
+        ):
             from src.core.market_profile import CN_PROFILE
             from src.core.market_strategy import get_market_strategy_blueprint
             from src.report_language import get_report_labels
