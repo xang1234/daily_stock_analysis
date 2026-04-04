@@ -10,14 +10,28 @@ try:
     import litellm  # noqa: F401
 except ModuleNotFoundError:
     sys.modules["litellm"] = MagicMock()
+sys.modules.setdefault("json_repair", SimpleNamespace(repair_json=lambda value: value))
+sys.modules.setdefault("src.storage", SimpleNamespace(persist_llm_usage=MagicMock()))
+sys.modules.setdefault(
+    "data_provider.base",
+    SimpleNamespace(normalize_stock_code=lambda value: value),
+)
 
 from src.analyzer import GeminiAnalyzer
+
+
+def _config(report_language: str = "zh") -> SimpleNamespace:
+    return SimpleNamespace(
+        news_max_age_days=30,
+        news_strategy_profile="short",
+        report_language=report_language,
+    )
 
 
 class AnalyzerNewsPromptTestCase(unittest.TestCase):
     def test_analysis_prompt_resolves_shared_skill_prompt_state_by_default(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
-            analyzer = GeminiAnalyzer()
+            analyzer = GeminiAnalyzer(config=_config())
 
         fake_state = SimpleNamespace(
             skill_instructions="### 技能 1: 波段低吸\n- 关注支撑确认",
@@ -32,6 +46,7 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
     def test_analysis_prompt_uses_injected_skill_sections_instead_of_hardcoded_trend_baseline(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
             analyzer = GeminiAnalyzer(
+                config=_config(),
                 skill_instructions="### 技能 1: 缠论\n- 关注中枢与背驰",
                 default_skill_policy="",
             )
@@ -45,6 +60,7 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
     def test_analysis_prompt_keeps_injected_default_policy_for_implicit_default_run(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
             analyzer = GeminiAnalyzer(
+                config=_config(),
                 skill_instructions="### 技能 1: 默认多头趋势",
                 default_skill_policy="## 默认技能基线（必须严格遵守）\n- **多头排列必须条件**：MA5 > MA10 > MA20",
                 use_legacy_default_prompt=True,
@@ -57,8 +73,13 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("多头排列：MA5 > MA10 > MA20", prompt)
 
     def test_prompt_contains_time_constraints(self) -> None:
+        fake_cfg = SimpleNamespace(
+            news_max_age_days=30,
+            news_strategy_profile="medium",  # 7 days
+            report_language="zh",
+        )
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
-            analyzer = GeminiAnalyzer()
+            analyzer = GeminiAnalyzer(config=fake_cfg)
 
         context = {
             "code": "600519",
@@ -74,12 +95,7 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
                 }
             },
         }
-        fake_cfg = SimpleNamespace(
-            news_max_age_days=30,
-            news_strategy_profile="medium",  # 7 days
-        )
-        with patch("src.analyzer.get_config", return_value=fake_cfg):
-            prompt = analyzer._format_prompt(context, "贵州茅台", news_context="news")
+        prompt = analyzer._format_prompt(context, "贵州茅台", news_context="news")
 
         self.assertIn("近7日的新闻搜索结果", prompt)
         self.assertIn("每一条都必须带具体日期（YYYY-MM-DD）", prompt)
@@ -89,8 +105,13 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("禁止编造", prompt)
 
     def test_prompt_prefers_context_news_window_days(self) -> None:
+        fake_cfg = SimpleNamespace(
+            news_max_age_days=30,
+            news_strategy_profile="long",  # 30 days if fallback is used
+            report_language="zh",
+        )
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
-            analyzer = GeminiAnalyzer()
+            analyzer = GeminiAnalyzer(config=fake_cfg)
 
         context = {
             "code": "600519",
@@ -99,12 +120,7 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
             "today": {},
             "news_window_days": 1,
         }
-        fake_cfg = SimpleNamespace(
-            news_max_age_days=30,
-            news_strategy_profile="long",  # 30 days if fallback is used
-        )
-        with patch("src.analyzer.get_config", return_value=fake_cfg):
-            prompt = analyzer._format_prompt(context, "贵州茅台", news_context="news")
+        prompt = analyzer._format_prompt(context, "贵州茅台", news_context="news")
 
         self.assertIn("近1日的新闻搜索结果", prompt)
         self.assertIn("超出近1日窗口的新闻一律忽略", prompt)
@@ -112,6 +128,7 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
     def test_format_prompt_omits_legacy_trend_checks_for_nondefault_skill_mode(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
             analyzer = GeminiAnalyzer(
+                config=_config(),
                 skill_instructions="### 技能 1: 缠论\n- 关注中枢与背驰",
                 default_skill_policy="",
                 use_legacy_default_prompt=False,
@@ -142,6 +159,60 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertNotIn("是否满足 MA5>MA10>MA20 多头排列", prompt)
         self.assertNotIn("超过5%必须标注\"严禁追高\"", prompt)
         self.assertNotIn("MA5>MA10>MA20为多头", prompt)
+
+    def test_english_system_prompt_avoids_chinese_schema_copy(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer(
+                config=_config("en"),
+                skill_instructions="",
+                default_skill_policy="",
+                use_legacy_default_prompt=False,
+            )
+
+        prompt = analyzer._get_analysis_system_prompt("en", stock_code="AAPL")
+
+        self.assertIn("Decision Dashboard JSON", prompt)
+        self.assertIn("All human-readable values must be written in English", prompt)
+        self.assertNotIn("一句话核心结论", prompt)
+        self.assertNotIn("输出格式", prompt)
+
+    def test_english_user_prompt_avoids_chinese_fixed_copy(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer(
+                config=_config("en"),
+                skill_instructions="",
+                default_skill_policy="",
+                use_legacy_default_prompt=False,
+            )
+
+        context = {
+            "code": "AAPL",
+            "stock_name": "Apple",
+            "date": "2026-03-16",
+            "today": {"close": 180, "open": 178, "high": 181, "low": 177, "pct_chg": 1.2},
+            "trend_analysis": {"trend_strength": 62, "bias_ma5": 1.3, "bias_ma10": 2.1, "signal_score": 66},
+        }
+        prompt = analyzer._format_prompt(context, "Apple", news_context=None, report_language="en")
+
+        self.assertIn("Decision Dashboard Analysis Request", prompt)
+        self.assertIn("Return the full JSON only", prompt)
+        self.assertNotIn("决策仪表盘分析请求", prompt)
+        self.assertNotIn("重点关注", prompt)
+
+    def test_mixed_language_validator_detects_dashboard_residue(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer(config=_config("en"))
+
+        result = analyzer._build_language_fail_safe_result("AAPL", "Apple", "en")
+        result.dashboard = {
+            "core_conclusion": {"one_sentence": "继续观望"},
+            "battle_plan": {"action_checklist": ["✅ 等待突破"]},
+        }
+
+        violations = analyzer._collect_non_english_paths(result)
+
+        self.assertIn("dashboard.core_conclusion.one_sentence", violations)
+        self.assertIn("dashboard.battle_plan.action_checklist[0]", violations)
 
 
 if __name__ == "__main__":

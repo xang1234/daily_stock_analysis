@@ -9,14 +9,25 @@ Covers:
   does NOT trigger AttributeError (regression guard for the old bypass bug)
 """
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # Stub heavy dependencies before project imports
 for _mod in ("litellm", "google.generativeai", "google.genai", "anthropic"):
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
+sys.modules.setdefault("json_repair", SimpleNamespace(repair_json=lambda value: value))
+sys.modules.setdefault("src.storage", SimpleNamespace(persist_llm_usage=MagicMock()))
+sys.modules.setdefault("src.search_service", SimpleNamespace(SearchService=object))
+sys.modules.setdefault(
+    "data_provider.base",
+    SimpleNamespace(
+        DataFetcherManager=MagicMock(),
+        normalize_stock_code=lambda value: value,
+    ),
+)
+sys.modules.setdefault("pandas", MagicMock())
 
-import pytest
 from unittest.mock import PropertyMock
 
 
@@ -51,6 +62,7 @@ class TestAnalyzerGenerateText:
             mock_call.assert_called_once_with(
                 "写一份复盘",
                 generation_config={"max_tokens": 1024, "temperature": 0.5},
+                system_prompt=None,
             )
 
     def test_generate_text_returns_none_on_failure(self):
@@ -67,6 +79,15 @@ class TestAnalyzerGenerateText:
             gen_cfg = kwargs["generation_config"]
             assert gen_cfg["max_tokens"] == 2048
             assert gen_cfg["temperature"] == 0.7
+            assert kwargs["system_prompt"] is None
+
+    def test_generate_text_passes_system_prompt_override(self):
+        analyzer = self._make_analyzer()
+        with patch.object(analyzer, "_call_litellm", return_value="ok") as mock_call:
+            analyzer.generate_text("hello", system_prompt="custom system prompt")
+
+            _, kwargs = mock_call.call_args
+            assert kwargs["system_prompt"] == "custom system prompt"
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +99,7 @@ class TestMarketAnalyzerBypassFix:
         """Return a MarketAnalyzer whose embedded Analyzer.generate_text is mocked."""
         from src.core.market_profile import CN_PROFILE
         from src.core.market_strategy import get_market_strategy_blueprint
+        from src.report_language import get_report_labels
 
         with patch("src.analyzer.get_config") as mock_cfg, \
              patch("src.market_analyzer.get_config") as mock_cfg2:
@@ -107,6 +129,8 @@ class TestMarketAnalyzerBypassFix:
             ma.profile = CN_PROFILE
             ma.strategy = get_market_strategy_blueprint("cn")
             ma.region = "cn"
+            ma.report_language = "zh"
+            ma.labels = get_report_labels("zh")
             return ma
 
     def test_no_access_to_private_model_attribute(self):
@@ -167,6 +191,7 @@ class TestMarketAnalyzerBypassFix:
         _, kwargs = ma.analyzer.generate_text.call_args
         assert kwargs["max_tokens"] == 8192
         assert kwargs["temperature"] == 0.7
+        assert "system_prompt" in kwargs
 
     def test_no_private_attribute_access_in_market_analyzer_source(self):
         """Static guard: market_analyzer.py must not access private analyzer attrs."""

@@ -35,11 +35,16 @@ def main() -> int:
 
     try:
         import uvicorn
-        from src.config import setup_env
+        from src.config import get_config, setup_env
         from src.logging_config import setup_logging
 
         setup_env()
-        setup_logging(log_prefix="web_server")
+        config = get_config()
+        setup_logging(
+            log_prefix="web_server",
+            log_language=getattr(config, "log_language", "zh"),
+            report_language=getattr(config, "report_language", "zh"),
+        )
 
         uvicorn.run(
             "api.app:app",

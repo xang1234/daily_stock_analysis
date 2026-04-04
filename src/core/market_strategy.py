@@ -4,6 +4,8 @@
 from dataclasses import dataclass
 from typing import List
 
+from src.report_language import normalize_report_language
+
 
 @dataclass(frozen=True)
 class StrategyDimension:
@@ -25,8 +27,46 @@ class MarketStrategyBlueprint:
     dimensions: List[StrategyDimension]
     action_framework: List[str]
 
-    def to_prompt_block(self) -> str:
+    def to_prompt_block(self, language: str | None = None) -> str:
         """Render blueprint as prompt instructions."""
+        normalized_language = (
+            normalize_report_language(language)
+            if language is not None
+            else ("en" if self.region == "us" else "zh")
+        )
+        if self.region == "cn" and normalized_language == "en":
+            principles_text = "\n".join([
+                "- Read index direction first, then turnover structure, then sector persistence.",
+                "- Every conclusion must map to position sizing, pacing, and risk control.",
+                "- Use only same-day market data and recent news; do not invent unverified details.",
+            ])
+            dimensions_text = "\n".join([
+                "- Trend Structure: Determine whether the market is advancing, range-bound, or defensive.\n"
+                "  - Are the Shanghai, Shenzhen, and ChiNext indices aligned\n"
+                "  - Was the move confirmed by volume expansion or contraction\n"
+                "  - Were key support or resistance levels reclaimed or lost",
+                "- Flows and Sentiment: Measure short-term risk appetite.\n"
+                "  - Advance/decline and limit-up/limit-down structure\n"
+                "  - Whether total turnover expanded\n"
+                "  - Whether crowded leaders started to diverge",
+                "- Leading Themes: Identify tradeable leaders and avoid weak areas.\n"
+                "  - Whether leading sectors have event catalysts\n"
+                "  - Whether sector leadership is concentrated and persistent\n"
+                "  - Whether lagging sectors are broadening",
+            ])
+            action_text = "\n".join([
+                "- Offensive: index alignment higher + turnover expansion + stronger core themes.",
+                "- Balanced: index divergence or low-volume range; control size and wait for confirmation.",
+                "- Defensive: index weakness + broader laggards; prioritize risk control and de-risking.",
+            ])
+            return (
+                "## Strategy Blueprint: China Market Three-Stage Recap\n"
+                "Focus on index trend, capital rotation, and sector leadership to produce the next-session plan.\n\n"
+                f"### Strategy Principles\n{principles_text}\n\n"
+                f"### Analysis Dimensions\n{dimensions_text}\n\n"
+                f"### Action Framework\n{action_text}"
+            )
+
         principles_text = "\n".join([f"- {item}" for item in self.principles])
         action_text = "\n".join([f"- {item}" for item in self.action_framework])
 
@@ -44,10 +84,23 @@ class MarketStrategyBlueprint:
             f"### Action Framework\n{action_text}"
         )
 
-    def to_markdown_block(self) -> str:
+    def to_markdown_block(self, language: str | None = None) -> str:
         """Render blueprint as markdown section for template fallback report."""
+        normalized_language = (
+            normalize_report_language(language)
+            if language is not None
+            else ("en" if self.region == "us" else "zh")
+        )
+        if self.region == "cn" and normalized_language == "en":
+            dims = "\n".join([
+                "- **Trend Structure**: classify the market as advancing, range-bound, or defensive",
+                "- **Flows and Sentiment**: track breadth, turnover, and crowding risk",
+                "- **Leading Themes**: identify durable leaders and fragile laggards",
+            ])
+            return f"### VI. Strategy Framework\n{dims}\n"
+
         dims = "\n".join([f"- **{dim.name}**: {dim.objective}" for dim in self.dimensions])
-        section_title = "### 六、策略框架" if self.region == "cn" else "### VI. Strategy Framework"
+        section_title = "### 六、策略框架" if normalized_language == "zh" else "### VI. Strategy Framework"
         return f"{section_title}\n{dims}\n"
 
 

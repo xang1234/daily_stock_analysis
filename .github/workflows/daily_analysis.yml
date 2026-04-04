@@ -182,6 +182,7 @@ jobs:
           # ==========================================
           REPORT_TYPE: ${{ vars.REPORT_TYPE || secrets.REPORT_TYPE || 'simple' }}
           REPORT_LANGUAGE: ${{ vars.REPORT_LANGUAGE || secrets.REPORT_LANGUAGE || 'zh' }}
+          LOG_LANGUAGE: ${{ vars.LOG_LANGUAGE || secrets.LOG_LANGUAGE || 'follow_report' }}
           SINGLE_STOCK_NOTIFY: ${{ vars.SINGLE_STOCK_NOTIFY || secrets.SINGLE_STOCK_NOTIFY || 'false' }}
           MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || secrets.MARKET_REVIEW_ENABLED || 'true' }}
           ANALYSIS_DELAY: ${{ vars.ANALYSIS_DELAY || secrets.ANALYSIS_DELAY || '0' }}
@@ -221,6 +222,7 @@ jobs:
           echo "📊 Watchlist: $STOCK_LIST"
           echo "📝 Report type: $REPORT_TYPE"
           echo "🌐 Report language: $REPORT_LANGUAGE"
+          echo "🪵 Log language: $LOG_LANGUAGE"
           echo ""
           echo "=========================================="
           echo "📋 Configuration check"

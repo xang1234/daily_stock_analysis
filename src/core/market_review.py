@@ -19,6 +19,7 @@ from src.notification import NotificationService
 from src.market_analyzer import MarketAnalyzer
 from src.search_service import SearchService
 from src.analyzer import GeminiAnalyzer
+from src.report_language import get_report_labels, normalize_report_language
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,8 @@ def run_market_review(
     """
     logger.info("开始执行大盘复盘分析...")
     config = get_config()
+    report_language = normalize_report_language(getattr(config, "report_language", "zh"))
+    labels = get_report_labels(report_language)
     region = (
         override_region
         if override_region is not None
@@ -60,10 +63,16 @@ def run_market_review(
         if region == 'both':
             # 顺序执行 A 股 + 美股，合并报告
             cn_analyzer = MarketAnalyzer(
-                search_service=search_service, analyzer=analyzer, region='cn'
+                search_service=search_service,
+                analyzer=analyzer,
+                region='cn',
+                report_language=report_language,
             )
             us_analyzer = MarketAnalyzer(
-                search_service=search_service, analyzer=analyzer, region='us'
+                search_service=search_service,
+                analyzer=analyzer,
+                region='us',
+                report_language=report_language,
             )
             logger.info("生成 A 股大盘复盘报告...")
             cn_report = cn_analyzer.run_daily_review()
@@ -71,11 +80,11 @@ def run_market_review(
             us_report = us_analyzer.run_daily_review()
             review_report = ''
             if cn_report:
-                review_report = f"# A股大盘复盘\n\n{cn_report}"
+                review_report = f"# {labels['cn_market_review_title']}\n\n{cn_report}"
             if us_report:
                 if review_report:
-                    review_report += "\n\n---\n\n> 以下为美股大盘复盘\n\n"
-                review_report += f"# 美股大盘复盘\n\n{us_report}"
+                    review_report += f"\n\n---\n\n> {labels['follow_up_us_market_review']}\n\n"
+                review_report += f"# {labels['us_market_review_title']}\n\n{us_report}"
             if not review_report:
                 review_report = None
         else:
@@ -83,6 +92,7 @@ def run_market_review(
                 search_service=search_service,
                 analyzer=analyzer,
                 region=region,
+                report_language=report_language,
             )
             review_report = market_analyzer.run_daily_review()
         
@@ -91,7 +101,7 @@ def run_market_review(
             date_str = datetime.now().strftime('%Y%m%d')
             report_filename = f"market_review_{date_str}.md"
             filepath = notifier.save_report_to_file(
-                f"# 🎯 大盘复盘\n\n{review_report}", 
+                f"# 🎯 {labels['market_review_title']}\n\n{review_report}",
                 report_filename
             )
             logger.info(f"大盘复盘报告已保存: {filepath}")
@@ -101,7 +111,7 @@ def run_market_review(
                 logger.info("合并推送模式：跳过大盘复盘单独推送，将在个股+大盘复盘后统一发送")
             elif send_notification and notifier.is_available():
                 # 添加标题
-                report_content = f"🎯 大盘复盘\n\n{review_report}"
+                report_content = f"🎯 {labels['market_review_title']}\n\n{review_report}"
 
                 success = notifier.send(report_content, email_send_to_all=True)
                 if success:

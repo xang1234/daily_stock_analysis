@@ -58,6 +58,41 @@ CORE_TRADING_SKILL_POLICY_ZH = """## 默认技能基线（必须严格遵守）
 - 强势趋势股可适当放宽乖离率要求，轻仓追踪但需设止损
 """
 
+CORE_TRADING_SKILL_POLICY_EN = """## Default Skill Baseline (mandatory)
+
+Activated skills can add a sharper edge, but the shared risk-control and execution baseline below still applies unless a user explicitly selected a different skill set.
+
+### 1. Strict Entry Discipline (do not chase)
+- **Never chase extended price**: if price is more than 5% above MA5, do not buy
+- Bias < 2%: ideal entry zone
+- Bias 2-5%: only consider a small starter position
+- Bias > 5%: default to `Watch` unless the active skill provides a stronger case
+
+### 2. Trend First
+- **Bullish alignment baseline**: MA5 > MA10 > MA20
+- Prefer stocks with aligned moving averages; avoid clear bearish structures
+- Expanding upward averages are stronger than flat or tangled averages
+
+### 3. Efficiency and Chip Structure
+- Prefer tighter chip concentration: 90% concentration below 15% is healthier
+- Profit ratio in the 70-90% zone can signal profit-taking risk
+- A current price 5-15% above average cost is usually healthier than a deep chase
+
+### 4. Entry Preference (buy support, not excitement)
+- **Preferred entry**: low-volume pullback that holds MA5
+- **Secondary entry**: pullback that holds MA10
+- **Stand aside**: if price loses MA20, wait for the setup to repair
+
+### 5. Key Risk Checklist
+- Shareholder reductions, earnings warnings, regulatory penalties, policy headwinds, and large unlock schedules
+
+### 6. Valuation Awareness
+- When valuation is obviously stretched, call it out clearly in the risk section
+
+### 7. Exception for Powerful Leaders
+- Strong trend leaders can tolerate a slightly wider bias, but only with smaller size and a clear stop-loss
+"""
+
 TECHNICAL_SKILL_RULES_EN = """## Default Skill Baseline
 
 Treat the currently activated skills as the primary analysis lens, but keep the
@@ -70,7 +105,11 @@ following default risk controls as the shared baseline:
 """
 
 
-def get_default_trading_skill_policy(*, explicit_skill_selection: bool) -> str:
+def get_default_trading_skill_policy(
+    *,
+    explicit_skill_selection: bool,
+    report_language: str = "zh",
+) -> str:
     """Return the legacy default trading baseline only for implicit/default runs.
 
     When a caller explicitly chooses a skill (via request payload or config),
@@ -79,7 +118,7 @@ def get_default_trading_skill_policy(*, explicit_skill_selection: bool) -> str:
     """
     if explicit_skill_selection:
         return ""
-    return CORE_TRADING_SKILL_POLICY_ZH
+    return CORE_TRADING_SKILL_POLICY_EN if str(report_language).strip().lower() == "en" else CORE_TRADING_SKILL_POLICY_ZH
 
 
 def get_default_technical_skill_policy(*, explicit_skill_selection: bool) -> str:

@@ -136,7 +136,8 @@ Go to your forked repository:
 | `CUSTOM_WEBHOOK_BEARER_TOKEN` | Bearer token for custom webhooks | Optional |
 | `SINGLE_STOCK_NOTIFY` | Notify immediately after each stock finishes | Optional |
 | `REPORT_TYPE` | `simple`, `full`, or `brief` | Optional |
-| `REPORT_LANGUAGE` | `zh` or `en`; controls prompts, templates, and fixed report labels | Optional |
+| `REPORT_LANGUAGE` | `zh` or `en`; controls stock-analysis prompts, market-review prompts, templates, notification fallbacks, and fixed report labels | Optional |
+| `LOG_LANGUAGE` | `zh`, `en`, or `follow_report`; controls runtime log language separately from report output | Optional |
 | `ANALYSIS_DELAY` | Delay in seconds between stocks and market review | Optional |
 
 </details>
